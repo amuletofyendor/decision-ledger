@@ -203,6 +203,18 @@ Export profiles are deliberately conservative:
 
 Use `--clean` to remove the output directory before regenerating it.
 
+For local browsing, prefer the live wiki server. It serves each page on demand
+from the current SQLite projection instead of prebuilding a static tree:
+
+```bash
+./bin/decision-wiki-server decision-ledger \
+  --home /home/neil/Dev/.decision-ledger \
+  --port 8766
+```
+
+Use the static export when you need a portable audit pack to host elsewhere,
+for example on nginx without the ledger process running.
+
 ## MCP Server
 
 The repo also includes a dependency-free stdio MCP server:

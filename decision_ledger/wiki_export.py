@@ -18,6 +18,69 @@ PROFILE_VISIBILITY = {
     "public": {"public"},
 }
 
+STYLESHEET_CSS = """
+:root {
+  color-scheme: light;
+  --bg: #f7f7f4;
+  --panel: #ffffff;
+  --text: #202124;
+  --muted: #5f6368;
+  --border: #d8d7d0;
+  --accent: #226f68;
+  --warn: #8a5a00;
+  --validated: #226f68;
+  --contested: #8f3a22;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+header, main { max-width: 1120px; margin: 0 auto; padding: 24px; }
+header { padding-bottom: 8px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
+h2 { font-size: 18px; margin: 28px 0 10px; }
+h3 { font-size: 15px; margin: 18px 0 8px; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+pre {
+  background: #efeee8;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.meta, .breadcrumb, .empty { color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.card, .record {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+}
+.record { margin: 10px 0; }
+.badge {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.obsolete .badge.status { color: var(--warn); border-color: #d6b15b; }
+.badge.validation.validated { color: var(--validated); border-color: #77aaa4; }
+.badge.validation.contested,
+.badge.validation.invalidated { color: var(--contested); border-color: #c98773; }
+ul.clean { list-style: none; padding: 0; margin: 0; }
+ul.clean li { margin: 7px 0; }
+.body { max-width: 860px; }
+""".strip()
+
 
 @dataclass(frozen=True)
 class WikiExportResult:
@@ -131,70 +194,8 @@ def _subject_prefixes(root_subject: str, subjects: list[str]) -> set[str]:
 
 
 def _write_assets(out: Path) -> Path:
-    css = """
-:root {
-  color-scheme: light;
-  --bg: #f7f7f4;
-  --panel: #ffffff;
-  --text: #202124;
-  --muted: #5f6368;
-  --border: #d8d7d0;
-  --accent: #226f68;
-  --warn: #8a5a00;
-  --validated: #226f68;
-  --contested: #8f3a22;
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-header, main { max-width: 1120px; margin: 0 auto; padding: 24px; }
-header { padding-bottom: 8px; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
-h2 { font-size: 18px; margin: 28px 0 10px; }
-h3 { font-size: 15px; margin: 18px 0 8px; }
-code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
-pre {
-  background: #efeee8;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  overflow: auto;
-  white-space: pre-wrap;
-}
-.meta, .breadcrumb, .empty { color: var(--muted); }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-.card, .record {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 14px;
-}
-.record { margin: 10px 0; }
-.badge {
-  display: inline-block;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 12px;
-  color: var(--muted);
-  margin-right: 4px;
-}
-.obsolete .badge.status { color: var(--warn); border-color: #d6b15b; }
-.badge.validation.validated { color: var(--validated); border-color: #77aaa4; }
-.badge.validation.contested,
-.badge.validation.invalidated { color: var(--contested); border-color: #c98773; }
-ul.clean { list-style: none; padding: 0; margin: 0; }
-ul.clean li { margin: 7px 0; }
-.body { max-width: 860px; }
-""".strip()
     path = out / "assets" / "styles.css"
-    path.write_text(css + "\n", encoding="utf-8")
+    path.write_text(STYLESHEET_CSS + "\n", encoding="utf-8")
     return path
 
 

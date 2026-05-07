@@ -41,9 +41,9 @@ Best practices:
   decision tree as records and attach the source document as evidence. Imported
   material should normally start as unvalidated unless you also verify it.
 - When the user asks to see, make, generate, or show a wiki, they usually want
-  a browsable result. Export the static wiki, then when the environment allows,
-  serve the output directory with a local HTTP server on a free localhost port
-  and provide that URL.
+  a browsable result. Prefer the live decision-wiki-server on a free localhost
+  port so pages are rendered from current ledger data on demand. Use static
+  export when the user needs a portable audit pack for nginx or handover.
 - If a user says "forget X before time T", interpret it as supersede or withdraw
   from future reasoning while preserving audit history.
 """
@@ -65,8 +65,9 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
 9. Preserve detail, but split multi-decision material into linked records when
    separate parts need independent subjects, tags, evidence, statuses, or future
    supersession.
-10. If the user asks for a wiki, export the static wiki and normally serve it on
-   a free localhost port so the user can browse it immediately.
+10. If the user asks for a wiki, normally start decision-wiki-server on a free
+   localhost port so the user can browse current ledger data immediately. Use
+   static export when a portable handover bundle is needed.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.
 """
@@ -86,5 +87,5 @@ TOOL_GUIDANCE = {
     "decision_show_record": "Show a complete record with tags, evidence, associations, and audit events.",
     "decision_list_records": "List records by subject prefix/status for quick navigation.",
     "decision_list_topics": "List subject topics in the decision tree with direct and subtree record counts. Use before gather when you need to discover available namespaces.",
-    "decision_export_wiki": "Export a subject subtree as static HTML plus JSON indexes. Use for browsable audit packs that can be hosted by nginx. When the user asks to see or generate a wiki, they generally want it served on a free localhost port for immediate browsing after export.",
+    "decision_export_wiki": "Export a subject subtree as static HTML plus JSON indexes. Use for portable audit packs that can be hosted by nginx. For immediate browsing, prefer the live decision-wiki-server on a free localhost port so pages reflect current ledger data.",
 }

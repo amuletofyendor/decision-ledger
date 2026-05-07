@@ -76,6 +76,7 @@ events we can regenerate:
 - SQLite query projections
 - markdown summaries
 - static HTML wiki exports
+- live wiki pages served on demand
 - JSON search indexes
 - graph exports
 - reports for review or handover
@@ -532,6 +533,27 @@ Profiles:
 - `internal`: includes local paths, command evidence, and full notes
 - `shareable`: strips or rewrites local absolute paths and sensitive evidence
 - `public`: exports only records explicitly marked public/exportable
+
+## 5.7 Serve Live Wiki
+
+Example:
+
+```bash
+decision-wiki-server connected-ai.auth \
+  --home ./.decision-ledger \
+  --port 8766 \
+  --profile internal
+```
+
+The live server should resolve each subject page, record page, stylesheet,
+search index, and graph index on request against the current SQLite projection.
+It should not prebuild the whole wiki tree. This follows the operational shape
+of the Connected.AI wiki services: normalize the requested path, resolve the
+corresponding live source, and render only that response.
+
+The static exporter remains useful for portable audit packs that can be hosted
+by nginx or shared as immutable handover artifacts. The live server is the
+preferred default when the user asks to see the wiki locally.
 
 ## 6. Static Wiki Export
 
