@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 from .db import connect
 from .model import new_id, now_iso, parse_datetime
-from .repository import Ledger
+from .repository import Ledger, validate_validation_state
 
 
 DEFAULT_LEDGER_HOME = Path.home() / ".decision-ledger"
@@ -138,7 +138,9 @@ class EventedLedger:
         tags: list[str] | None = None,
         related_subjects: list[str] | None = None,
         export_visibility: str = "private",
+        validation_state: str = "unvalidated",
     ) -> str:
+        validate_validation_state(validation_state)
         record_id = new_id("rec")
         created_at = now_iso()
         event = self.event_store.append(
@@ -149,6 +151,7 @@ class EventedLedger:
             payload={
                 "kind": kind,
                 "status": status,
+                "validation_state": validation_state,
                 "summary": summary,
                 "body": body,
                 "created_at": created_at,
@@ -161,6 +164,34 @@ class EventedLedger:
         apply_event(self.conn, event)
         self.conn.commit()
         return record_id
+
+    def validate_record(
+        self,
+        *,
+        record_id: str,
+        validation_state: str,
+        note: str | None = None,
+        validated_by: str | None = None,
+        validated_at: str | None = None,
+    ) -> None:
+        validate_validation_state(validation_state)
+        record = self.require_record_dict(record_id)
+        timestamp = parse_datetime(validated_at) if validated_at else now_iso()
+        event = self.event_store.append(
+            subject=record["subject"],
+            event_type="validation_changed",
+            record_id=record_id,
+            created_by=validated_by,
+            note=note,
+            payload={
+                "validation_state": validation_state,
+                "validated_at": timestamp,
+                "validated_by": validated_by,
+                "validation_note": note,
+            },
+        )
+        apply_event(self.conn, event)
+        self.conn.commit()
 
     def add_evidence(
         self,
@@ -337,6 +368,8 @@ def apply_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
         apply_associated(conn, event)
     elif event_type == "superseded":
         apply_superseded(conn, event)
+    elif event_type == "validation_changed":
+        apply_validation_changed(conn, event)
     else:
         raise ValueError(f"unknown event type: {event_type}")
 
@@ -347,16 +380,17 @@ def apply_record_created(conn: sqlite3.Connection, event: dict[str, Any]) -> Non
     conn.execute(
         """
         INSERT OR IGNORE INTO records (
-          id, subject, kind, status, summary, body, created_at, created_by,
+          id, subject, kind, status, validation_state, summary, body, created_at, created_by,
           updated_at, valid_from, export_visibility
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["record_id"],
             event["subject"],
             payload["kind"],
             payload["status"],
+            payload.get("validation_state", "unvalidated"),
             payload.get("summary"),
             payload["body"],
             created_at,
@@ -460,6 +494,31 @@ def apply_superseded(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
         (valid_until, event["created_at"], payload["old_record_id"]),
     )
     insert_projection_event(conn, event, "superseded")
+
+
+def apply_validation_changed(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
+    payload = event["payload"]
+    validate_validation_state(payload["validation_state"])
+    conn.execute(
+        """
+        UPDATE records
+        SET validation_state = ?,
+            validated_at = ?,
+            validated_by = ?,
+            validation_note = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            payload["validation_state"],
+            parse_datetime(payload["validated_at"]) if payload.get("validated_at") else event["created_at"],
+            payload.get("validated_by") or event.get("created_by"),
+            payload.get("validation_note"),
+            event["created_at"],
+            event["record_id"],
+        ),
+    )
+    insert_projection_event(conn, event, "validation_changed")
 
 
 def insert_projection_event(conn: sqlite3.Connection, event: dict[str, Any], projection_type: str) -> None:

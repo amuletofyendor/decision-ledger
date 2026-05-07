@@ -11,7 +11,7 @@ from . import __version__
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .guidance import CAPTURE_PROMPT, SERVER_INSTRUCTIONS, TOOL_GUIDANCE
-from .model import json_dumps
+from .model import VALIDATION_STATES, json_dumps
 from .wiki_export import export_static_wiki
 
 
@@ -167,6 +167,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                     "body": string_schema("Free-form thought, decision, assumption, question, finding, plan, or note body."),
                     "kind": enum_schema(["thought", "decision", "assumption", "question", "finding", "plan", "note"], "Record kind."),
                     "status": enum_schema(["active", "proposed", "accepted", "rejected", "superseded", "withdrawn", "resolved", "archived"], "Record status."),
+                    "validation_state": enum_schema(list(VALIDATION_STATES), "Validation state. Keep this separate from lifecycle status."),
                     "summary": string_schema("Short human-readable summary."),
                     "tags": array_schema("Loose tags for cross-cutting lookup."),
                     "related_subjects": array_schema("Secondary subject prefixes that should also retrieve this record."),
@@ -180,6 +181,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 body=require_str(args, "body"),
                 kind=args.get("kind", "thought"),
                 status=args.get("status", "active"),
+                validation_state=args.get("validation_state", "unvalidated"),
                 summary=args.get("summary"),
                 tags=list_arg(args, "tags"),
                 related_subjects=list_arg(args, "related_subjects"),
@@ -216,6 +218,22 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 export_visibility=args.get("visibility", "private"),
                 created_by=args.get("created_by"),
             )},
+        ),
+        "decision_validate_record": (
+            tool_definition(
+                "decision_validate_record",
+                "Validate Decision Record",
+                TOOL_GUIDANCE["decision_validate_record"],
+                {
+                    "record_id": string_schema("Record id to update."),
+                    "validation_state": enum_schema(list(VALIDATION_STATES), "New validation state."),
+                    "note": string_schema("Why this validation state is justified."),
+                    "validated_by": string_schema("Human or agent changing validation state."),
+                    "validated_at": string_schema("Optional validation timestamp."),
+                },
+                required=["record_id", "validation_state"],
+            ),
+            lambda args: validate_record_tool(ledger, args),
         ),
         "decision_associate_records": (
             tool_definition(
@@ -310,6 +328,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                     "query": string_schema("FTS5 full-text query."),
                     "limit": {"type": "integer", "description": "Maximum result count."},
                     "include_obsolete": {"type": "boolean", "description": "Include obsolete statuses."},
+                    "validation_state": enum_schema(list(VALIDATION_STATES), "Optional validation-state filter."),
                 },
                 required=["query"],
             ),
@@ -317,6 +336,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 require_str(args, "query"),
                 limit=int(args.get("limit", 20)),
                 include_obsolete=bool(args.get("include_obsolete", False)),
+                validation_state=args.get("validation_state"),
             )],
         ),
         "decision_show_record": (
@@ -337,6 +357,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 {
                     "subject": string_schema("Optional subject prefix."),
                     "status": string_schema("Optional exact status filter."),
+                    "validation_state": enum_schema(list(VALIDATION_STATES), "Optional validation-state filter."),
                     "include_obsolete": {"type": "boolean", "description": "Include obsolete statuses."},
                     "limit": {"type": "integer", "description": "Maximum result count."},
                 },
@@ -344,6 +365,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
             lambda args: [dict(row) for row in ledger.list_records(
                 subject=args.get("subject"),
                 status=args.get("status"),
+                validation_state=args.get("validation_state"),
                 include_obsolete=bool(args.get("include_obsolete", False)),
                 limit=int(args.get("limit", 50)),
             )],
@@ -448,6 +470,19 @@ def supersede_record_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject
         valid_until=args.get("valid_until"),
     )
     return {"superseded": [old_record_id]}
+
+
+def validate_record_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
+    record_id = require_str(args, "record_id")
+    validation_state = require_str(args, "validation_state")
+    ledger.validate_record(
+        record_id=record_id,
+        validation_state=validation_state,
+        note=args.get("note"),
+        validated_by=args.get("validated_by"),
+        validated_at=args.get("validated_at"),
+    )
+    return {"record_id": record_id, "validation_state": validation_state}
 
 
 def require_record_result(ledger: EventedLedger, record_id: str) -> JsonObject:

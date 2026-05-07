@@ -141,6 +141,8 @@ def _write_assets(out: Path) -> Path:
   --border: #d8d7d0;
   --accent: #226f68;
   --warn: #8a5a00;
+  --validated: #226f68;
+  --contested: #8f3a22;
 }
 * { box-sizing: border-box; }
 body {
@@ -184,6 +186,9 @@ pre {
   margin-right: 4px;
 }
 .obsolete .badge.status { color: var(--warn); border-color: #d6b15b; }
+.badge.validation.validated { color: var(--validated); border-color: #77aaa4; }
+.badge.validation.contested,
+.badge.validation.invalidated { color: var(--contested); border-color: #c98773; }
 ul.clean { list-style: none; padding: 0; margin: 0; }
 ul.clean li { margin: 7px 0; }
 .body { max-width: 860px; }
@@ -197,6 +202,7 @@ def _write_index(out: Path, subject: str, records: list[dict[str, Any]], prefixe
     target = _subject_file(out, subject)
     current = len([record for record in records if record["status"] in CURRENT_STATUSES])
     obsolete = len([record for record in records if record["status"] in OBSOLETE_STATUSES])
+    validated = len([record for record in records if record["validation_state"] == "validated"])
     body = [
         f"<p class=\"meta\">Profile: {h(profile)}. Generated: {h(now_iso())}.</p>",
         "<div class=\"grid\">",
@@ -204,6 +210,7 @@ def _write_index(out: Path, subject: str, records: list[dict[str, Any]], prefixe
         stat_card("Records", str(len(records))),
         stat_card("Current", str(current)),
         stat_card("Obsolete", str(obsolete)),
+        stat_card("Validated", str(validated)),
         "</div>",
         "<h2>Start</h2>",
         f"<p><a href=\"{h(_rel(out / 'index.html', target))}\">{h(subject)}</a></p>",
@@ -261,6 +268,7 @@ def _write_record_page(out: Path, record: dict[str, Any], exported_record_ids: s
         "<div>",
         badge(record["kind"]),
         badge(record["status"], "status"),
+        validation_badge(record["validation_state"]),
         badge(record["export_visibility"]),
         "</div>",
     ]
@@ -271,6 +279,7 @@ def _write_record_page(out: Path, record: dict[str, Any], exported_record_ids: s
             f"<p class=\"meta\">Created: {h(record['created_at'])}"
             + (f" by {h(record['created_by'])}" if record.get("created_by") else "")
             + "</p>",
+            validation_meta(record),
             f"<pre class=\"body\">{h(record['body'])}</pre>",
         ]
     )
@@ -297,6 +306,7 @@ def _write_search_index(out: Path, records: list[dict[str, Any]]) -> Path:
             "subject": record["subject"],
             "kind": record["kind"],
             "status": record["status"],
+            "validation_state": record["validation_state"],
             "summary": record["summary"],
             "body": record["body"],
             "url": f"../records/{record['id']}/index.html",
@@ -315,6 +325,7 @@ def _write_graph(out: Path, records: list[dict[str, Any]], exported_record_ids: 
             "subject": record["subject"],
             "kind": record["kind"],
             "status": record["status"],
+            "validation_state": record["validation_state"],
             "summary": record["summary"],
         }
         for record in records
@@ -356,7 +367,7 @@ def render_record_list(from_file: Path, out: Path, records: list[dict[str, Any]]
         title = record.get("summary") or record["id"]
         items.append(
             f"<div class=\"{classes}\">"
-            f"<div>{badge(record['kind'])}{badge(record['status'], 'status')}</div>"
+            f"<div>{badge(record['kind'])}{badge(record['status'], 'status')}{validation_badge(record['validation_state'])}</div>"
             f"<a href=\"{h(_rel(from_file, _record_file(out, record['id'])))}\"><strong>{h(title)}</strong></a>"
             f"<div class=\"meta\">{h(record['subject'])} - {h(record['created_at'])}</div>"
             f"</div>"
@@ -431,6 +442,23 @@ def stat_card(label: str, value: str) -> str:
 def badge(value: str, extra_class: str = "") -> str:
     class_name = "badge" + (f" {extra_class}" if extra_class else "")
     return f"<span class=\"{class_name}\">{h(value)}</span>"
+
+
+def validation_badge(value: str) -> str:
+    return badge(value, f"validation {value}")
+
+
+def validation_meta(record: dict[str, Any]) -> str:
+    details = []
+    if record.get("validated_at"):
+        details.append(f"validated at {h(record['validated_at'])}")
+    if record.get("validated_by"):
+        details.append(f"by {h(record['validated_by'])}")
+    if record.get("validation_note"):
+        details.append(h(record["validation_note"]))
+    if not details:
+        return ""
+    return f"<p class=\"meta\">Validation: {'; '.join(details)}</p>"
 
 
 def page(title: str, body: list[str], stylesheet_href: str) -> str:

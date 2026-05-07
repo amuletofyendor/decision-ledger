@@ -8,7 +8,7 @@ from typing import Any
 
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
-from .model import json_dumps
+from .model import VALIDATION_STATES, json_dumps
 from .wiki_export import export_static_wiki
 
 
@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("subject")
     add.add_argument("--kind", default="thought", choices=["thought", "decision", "assumption", "question", "finding", "plan", "note"])
     add.add_argument("--status", default="active", choices=["active", "proposed", "accepted", "rejected", "superseded", "withdrawn", "resolved", "archived"])
+    add.add_argument("--validation-state", default="unvalidated", choices=VALIDATION_STATES)
     add.add_argument("--summary")
     add.add_argument("--body")
     add.add_argument("--body-file")
@@ -62,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd = subparsers.add_parser("list", help="List records")
     list_cmd.add_argument("subject", nargs="?")
     list_cmd.add_argument("--status")
+    list_cmd.add_argument("--validation-state", choices=VALIDATION_STATES)
     list_cmd.add_argument("--all", action="store_true", help="Include obsolete records")
     list_cmd.add_argument("--limit", type=int, default=50)
     list_cmd.add_argument("--json", action="store_true")
@@ -82,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     search = subparsers.add_parser("search", help="Full-text search records")
     search.add_argument("query")
     search.add_argument("--all", action="store_true", help="Include obsolete records")
+    search.add_argument("--validation-state", choices=VALIDATION_STATES)
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--json", action="store_true")
     search.set_defaults(func=cmd_search)
@@ -106,6 +109,15 @@ def build_parser() -> argparse.ArgumentParser:
     evidence_add.add_argument("--created-by")
     evidence_add.add_argument("--json", action="store_true")
     evidence_add.set_defaults(func=cmd_evidence_add)
+
+    validate = subparsers.add_parser("validate", help="Change a record validation state")
+    validate.add_argument("record_id")
+    validate.add_argument("--state", required=True, choices=VALIDATION_STATES)
+    validate.add_argument("--note")
+    validate.add_argument("--validated-by")
+    validate.add_argument("--validated-at")
+    validate.add_argument("--json", action="store_true")
+    validate.set_defaults(func=cmd_validate)
 
     associate = subparsers.add_parser("associate", help="Associate two records")
     associate.add_argument("from_record_id")
@@ -184,13 +196,23 @@ def cmd_add(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths
         tags=args.tag,
         related_subjects=args.related_subject,
         export_visibility=args.visibility,
+        validation_state=args.validation_state,
     )
     output({"id": record_id}, args.json, fallback=f"added {record_id}")
     return 0
 
 
 def cmd_list(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
-    rows = [dict(row) for row in ledger.list_records(subject=args.subject, status=args.status, include_obsolete=args.all, limit=args.limit)]
+    rows = [
+        dict(row)
+        for row in ledger.list_records(
+            subject=args.subject,
+            status=args.status,
+            validation_state=args.validation_state,
+            include_obsolete=args.all,
+            limit=args.limit,
+        )
+    ]
     output(rows, args.json, fallback=format_rows(rows))
     return 0
 
@@ -214,7 +236,15 @@ def cmd_show(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPath
 
 
 def cmd_search(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
-    rows = [dict(row) for row in ledger.search(args.query, include_obsolete=args.all, limit=args.limit)]
+    rows = [
+        dict(row)
+        for row in ledger.search(
+            args.query,
+            include_obsolete=args.all,
+            validation_state=args.validation_state,
+            limit=args.limit,
+        )
+    ]
     output(rows, args.json, fallback=format_rows(rows))
     return 0
 
@@ -238,6 +268,18 @@ def cmd_evidence_add(args: argparse.Namespace, ledger: EventedLedger, _paths: Le
         created_by=args.created_by,
     )
     output({"id": evidence_id}, args.json, fallback=f"added {evidence_id}")
+    return 0
+
+
+def cmd_validate(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    ledger.validate_record(
+        record_id=args.record_id,
+        validation_state=args.state,
+        note=args.note,
+        validated_by=args.validated_by,
+        validated_at=args.validated_at,
+    )
+    output({"record_id": args.record_id, "validation_state": args.state}, args.json, fallback=f"validated {args.record_id} as {args.state}")
     return 0
 
 
@@ -324,7 +366,7 @@ def format_rows(rows: list[dict[str, Any]]) -> str:
     lines = []
     for row in rows:
         summary = f" - {row['summary']}" if row.get("summary") else ""
-        lines.append(f"{row['id']} [{row['status']}/{row['kind']}] {row['subject']}{summary}")
+        lines.append(f"{row['id']} [{row['status']}/{row['kind']}/{row['validation_state']}] {row['subject']}{summary}")
     return "\n".join(lines)
 
 
@@ -343,7 +385,7 @@ def format_topics(topics: list[dict[str, Any]]) -> str:
 
 def format_record(record: dict[str, Any]) -> str:
     lines = [
-        f"{record['id']} [{record['status']}/{record['kind']}]",
+        f"{record['id']} [{record['status']}/{record['kind']}/{record['validation_state']}]",
         f"subject: {record['subject']}",
     ]
     if record.get("summary"):
@@ -351,10 +393,20 @@ def format_record(record: dict[str, Any]) -> str:
     lines.extend(
         [
             f"created_at: {record['created_at']}",
+            f"validation_state: {record['validation_state']}",
             "",
             record["body"],
         ]
     )
+    if record.get("validated_at") or record.get("validated_by") or record.get("validation_note"):
+        lines.append("")
+        lines.append("validation:")
+        if record.get("validated_at"):
+            lines.append(f"- at: {record['validated_at']}")
+        if record.get("validated_by"):
+            lines.append(f"- by: {record['validated_by']}")
+        if record.get("validation_note"):
+            lines.append(f"- note: {record['validation_note']}")
     if record["tags"]:
         lines.append("")
         lines.append("tags: " + ", ".join(record["tags"]))
@@ -393,7 +445,7 @@ def format_gathered(gathered: dict[str, Any]) -> str:
             else:
                 summary = f" - {row['summary']}" if row.get("summary") else ""
                 relation = f" ({row['relation']})" if row.get("relation") else ""
-                lines.append(f"  - {row['id']} [{row['status']}/{row['kind']}] {row['subject']}{relation}{summary}")
+                lines.append(f"  - {row['id']} [{row['status']}/{row['kind']}/{row['validation_state']}] {row['subject']}{relation}{summary}")
     return "\n".join(lines)
 
 

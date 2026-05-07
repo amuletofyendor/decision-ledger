@@ -48,6 +48,7 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     tool_names = {tool["name"] for tool in tools}
     assert "decision_rebuild_projection" in tool_names
     assert "decision_add_record" in tool_names
+    assert "decision_validate_record" in tool_names
     assert "decision_supersede_subject_before" in tool_names
     assert "decision_list_topics" in tool_names
     assert "decision_export_wiki" in tool_names
@@ -80,6 +81,7 @@ def test_prompt_get_bakes_in_usage_guidance(tmp_path: Path) -> None:
     assert "independent subjects, tags, evidence, statuses, or future" in text
     assert "serve it on" in text
     assert "free localhost port" in text
+    assert "validation_state" in text
     assert "Do not delete audit history" in text
 
 
@@ -104,10 +106,23 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
             "subject": "connected-ai.auth.oidc",
             "kind": "decision",
             "status": "accepted",
+            "validation_state": "partially_validated",
             "summary": "New decision",
             "body": "New OIDC direction.",
         },
     )["id"]
+
+    validated = tool_call(
+        server,
+        "decision_validate_record",
+        {
+            "record_id": new,
+            "validation_state": "validated",
+            "note": "Checked in MCP test",
+            "validated_by": "pytest",
+        },
+    )
+    assert validated["validation_state"] == "validated"
 
     evidence = tool_call(
         server,
@@ -147,6 +162,7 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
 
     rebuilt = tool_call(server, "decision_show_record", {"record_id": new})
     assert rebuilt["summary"] == "New decision"
+    assert rebuilt["validation_state"] == "validated"
 
 
 def test_batch_response_is_single_json_rpc_array(tmp_path: Path) -> None:
@@ -193,6 +209,8 @@ def test_mcp_export_wiki_tool(tmp_path: Path) -> None:
     assert result["records"] == 1
     assert "assets/search-index.json" in result["files"]
     assert (tmp_path / "wiki" / "records" / record_id / "index.html").exists()
+    search_index = json.loads((tmp_path / "wiki" / "assets" / "search-index.json").read_text(encoding="utf-8"))
+    assert search_index[0]["validation_state"] == "unvalidated"
 
 
 def test_mcp_list_topics_tool(tmp_path: Path) -> None:

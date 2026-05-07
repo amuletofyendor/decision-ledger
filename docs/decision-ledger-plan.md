@@ -55,6 +55,7 @@ The surrounding metadata should be structured:
 - subject
 - kind
 - status
+- validation_state
 - timestamps
 - evidence links
 - associations
@@ -87,6 +88,7 @@ Decision Ledger should combine:
 
 - exact subject-prefix filtering
 - record status filtering
+- validation-state filtering
 - full-text search
 - explicit graph associations
 - shared evidence lookups
@@ -124,6 +126,33 @@ Record statuses:
 
 The first version can keep statuses simple, but the schema should allow this
 vocabulary.
+
+Record validation states:
+
+- `unvalidated`: captured but not checked
+- `partially_validated`: some supporting evidence exists, but verification is incomplete
+- `validated`: checked against sufficient evidence for the current use
+- `contested`: credible evidence or review challenges it
+- `invalidated`: evidence shows it should not be treated as true
+
+Status and validation state are deliberately separate. Status describes whether
+a record is current in the decision lifecycle. Validation state describes how
+well the claim has been checked. A decision can be accepted while still relying
+on unvalidated assumptions, and a finding can be validated but later superseded
+by a newer finding.
+
+Validation state should be changed by appending an audit event, not by silently
+rewriting the record. A validation event should capture:
+
+- validation_state
+- validated_at
+- validated_by
+- validation_note
+
+Evidence can later gain per-link roles such as supporting, contradicting,
+source, reproduction, or review. The first implementation should keep
+record-level validation state as the simple contract and continue attaching
+evidence links for inspection.
 
 ## 3.2 Subject Namespace
 
@@ -353,6 +382,7 @@ for:
 - supersession chains
 - graph traversal
 - evidence lookups
+- validation-state filtering
 - static export
 
 ## 4.3 Append-Only Events
@@ -369,6 +399,7 @@ Event examples:
 
 - `created`
 - `status_changed`
+- `validation_changed`
 - `superseded`
 - `associated`
 - `evidence_added`
@@ -552,6 +583,7 @@ Each record page should show:
 - subject
 - kind
 - status
+- validation_state
 - summary
 - body
 - timestamps
@@ -616,6 +648,7 @@ decision_gather
 decision_supersede
 decision_associate
 decision_add_evidence
+decision_validate_record
 decision_export_wiki
 decision_get_current_state
 decision_get_audit_history
@@ -624,6 +657,9 @@ decision_get_audit_history
 Important behavior:
 
 - Agents should prefer active/accepted records.
+- Agents should prefer validated records for audit-sensitive factual claims.
+- Agents should label uncertainty when relying on unvalidated or partially
+  validated records.
 - Agents should disclose when they rely on superseded history.
 - Agents should not silently treat obsolete records as current.
 - Agents should preserve evidence links when summarizing.

@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Any
 
-from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, new_id, now_iso, parse_datetime
+from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, VALIDATION_STATES, new_id, now_iso, parse_datetime
 
 
 class Ledger:
@@ -23,7 +23,9 @@ class Ledger:
         tags: list[str] | None = None,
         related_subjects: list[str] | None = None,
         export_visibility: str = "private",
+        validation_state: str = "unvalidated",
     ) -> str:
+        validate_validation_state(validation_state)
         record_id = new_id("rec")
         created_at = now_iso()
         tags = tags or []
@@ -33,16 +35,17 @@ class Ledger:
             self.conn.execute(
                 """
                 INSERT INTO records (
-                  id, subject, kind, status, summary, body, created_at, created_by,
+                  id, subject, kind, status, validation_state, summary, body, created_at, created_by,
                   updated_at, valid_from, export_visibility
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record_id,
                     subject,
                     kind,
                     status,
+                    validation_state,
                     summary,
                     body,
                     created_at,
@@ -68,6 +71,44 @@ class Ledger:
                 )
             self.add_event(record_id, "created", created_by)
         return record_id
+
+    def validate_record(
+        self,
+        *,
+        record_id: str,
+        validation_state: str,
+        note: str | None = None,
+        validated_by: str | None = None,
+        validated_at: str | None = None,
+    ) -> None:
+        self.require_record(record_id)
+        validate_validation_state(validation_state)
+        timestamp = parse_datetime(validated_at) if validated_at else now_iso()
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE records
+                SET validation_state = ?,
+                    validated_at = ?,
+                    validated_by = ?,
+                    validation_note = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (validation_state, timestamp, validated_by, note, now_iso(), record_id),
+            )
+            self.add_event(
+                record_id,
+                "validation_changed",
+                validated_by,
+                note=note,
+                payload={
+                    "validation_state": validation_state,
+                    "validated_at": timestamp,
+                    "validated_by": validated_by,
+                    "validation_note": note,
+                },
+            )
 
     def add_evidence(
         self,
@@ -227,6 +268,7 @@ class Ledger:
         *,
         subject: str | None = None,
         status: str | None = None,
+        validation_state: str | None = None,
         include_obsolete: bool = False,
         limit: int = 50,
     ) -> list[sqlite3.Row]:
@@ -242,11 +284,15 @@ class Ledger:
             placeholders = ",".join("?" for _ in CURRENT_STATUSES)
             clauses.append(f"status IN ({placeholders})")
             params.extend(CURRENT_STATUSES)
+        if validation_state:
+            validate_validation_state(validation_state)
+            clauses.append("validation_state = ?")
+            params.append(validation_state)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
         return self.conn.execute(
             f"""
-            SELECT id, subject, kind, status, summary, created_at
+            SELECT id, subject, kind, status, validation_state, summary, created_at
             FROM records
             {where}
             ORDER BY created_at DESC
@@ -304,20 +350,33 @@ class Ledger:
             )
         return topics
 
-    def search(self, query: str, *, limit: int = 20, include_obsolete: bool = False) -> list[sqlite3.Row]:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        include_obsolete: bool = False,
+        validation_state: str | None = None,
+    ) -> list[sqlite3.Row]:
         status_clause = "" if include_obsolete else self._current_status_clause("r.status")
         params: list[Any] = [query]
         if not include_obsolete:
             params.extend(CURRENT_STATUSES)
+        validation_clause = ""
+        if validation_state:
+            validate_validation_state(validation_state)
+            validation_clause = "AND r.validation_state = ?"
+            params.append(validation_state)
         params.append(limit)
         return self.conn.execute(
             f"""
-            SELECT r.id, r.subject, r.kind, r.status, r.summary, r.created_at,
+            SELECT r.id, r.subject, r.kind, r.status, r.validation_state, r.summary, r.created_at,
                    bm25(records_fts) AS rank
             FROM records_fts
             JOIN records r ON r.rowid = records_fts.rowid
             WHERE records_fts MATCH ?
             {status_clause}
+            {validation_clause}
             ORDER BY rank
             LIMIT ?
             """,
@@ -422,7 +481,7 @@ class Ledger:
             params.extend(CURRENT_STATUSES)
         return self.conn.execute(
             f"""
-            SELECT DISTINCT r.id, r.subject, r.kind, r.status, r.summary,
+            SELECT DISTINCT r.id, r.subject, r.kind, r.status, r.validation_state, r.summary,
                    a.relation, a.note, a.from_record_id, a.to_record_id
             FROM record_associations a
             JOIN records r
@@ -525,3 +584,9 @@ class Ledger:
             "current": int(row["current"] or 0),
             "obsolete": int(row["obsolete"] or 0),
         }
+
+
+def validate_validation_state(validation_state: str) -> None:
+    if validation_state not in VALIDATION_STATES:
+        allowed = ", ".join(VALIDATION_STATES)
+        raise ValueError(f"unknown validation state: {validation_state}; expected one of {allowed}")

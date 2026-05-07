@@ -22,6 +22,8 @@ def test_add_show_and_search(tmp_path: Path, capsys) -> None:
         "decision",
         "--status",
         "accepted",
+        "--validation-state",
+        "partially_validated",
         "--summary",
         "Persist dynamic clients",
         "--body",
@@ -41,11 +43,38 @@ def test_add_show_and_search(tmp_path: Path, capsys) -> None:
     assert run_cli(db_path, "show", record_id, "--json") == 0
     record = json.loads(capsys.readouterr().out)
     assert record["subject"] == "connected-ai.auth.oidc.client-persistence"
+    assert record["validation_state"] == "partially_validated"
     assert record["tags"] == ["oidc"]
+
+    assert run_cli(
+        db_path,
+        "validate",
+        record_id,
+        "--state",
+        "validated",
+        "--validated-by",
+        "pytest",
+        "--note",
+        "Confirmed in test",
+        "--json",
+    ) == 0
+    validation_result = json.loads(capsys.readouterr().out)
+    assert validation_result["validation_state"] == "validated"
+
+    assert run_cli(db_path, "show", record_id, "--json") == 0
+    validated_record = json.loads(capsys.readouterr().out)
+    assert validated_record["validation_state"] == "validated"
+    assert validated_record["validated_by"] == "pytest"
+    assert validated_record["validation_note"] == "Confirmed in test"
+    assert [event["event_type"] for event in validated_record["events"]] == ["created", "validation_changed"]
 
     assert run_cli(db_path, "search", "OpenIddict", "--json") == 0
     results = json.loads(capsys.readouterr().out)
     assert [row["id"] for row in results] == [record_id]
+
+    assert run_cli(db_path, "list", "connected-ai.auth", "--validation-state", "validated", "--json") == 0
+    validated_results = json.loads(capsys.readouterr().out)
+    assert [row["id"] for row in validated_results] == [record_id]
 
     db_path.unlink()
     assert run_cli(db_path, "show", record_id, "--json") == 0
@@ -60,6 +89,7 @@ def test_add_show_and_search(tmp_path: Path, capsys) -> None:
     assert run_cli(db_path, "show", record_id, "--json") == 0
     rebuilt_record = json.loads(capsys.readouterr().out)
     assert rebuilt_record["summary"] == "Persist dynamic clients"
+    assert rebuilt_record["validation_state"] == "validated"
 
 
 def test_evidence_association_and_gather(tmp_path: Path, capsys) -> None:
@@ -244,6 +274,7 @@ def test_wiki_export_generates_static_subject_tree(tmp_path: Path, capsys) -> No
 
     record_html = (out_dir / "records" / record_id / "index.html").read_text(encoding="utf-8")
     assert "Persist dynamic clients" in record_html
+    assert "unvalidated" in record_html
     assert "https://example.test/evidence" in record_html
     assert "../../assets/styles.css" in record_html
 
@@ -289,3 +320,4 @@ def test_wiki_export_profile_filters_private_records(tmp_path: Path, capsys) -> 
 
     search_index = json.loads((tmp_path / "public-export" / "assets" / "search-index.json").read_text(encoding="utf-8"))
     assert search_index[0]["subject"] == "connected-ai.auth.public"
+    assert search_index[0]["validation_state"] == "unvalidated"

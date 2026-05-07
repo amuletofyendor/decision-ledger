@@ -9,10 +9,16 @@ CREATE TABLE IF NOT EXISTS records (
   status TEXT NOT NULL CHECK (
     status IN ('active', 'proposed', 'accepted', 'rejected', 'superseded', 'withdrawn', 'resolved', 'archived')
   ),
+  validation_state TEXT NOT NULL DEFAULT 'unvalidated' CHECK (
+    validation_state IN ('unvalidated', 'partially_validated', 'validated', 'contested', 'invalidated')
+  ),
   summary TEXT,
   body TEXT NOT NULL,
   created_at TEXT NOT NULL,
   created_by TEXT,
+  validated_at TEXT,
+  validated_by TEXT,
+  validation_note TEXT,
   updated_at TEXT,
   valid_from TEXT,
   valid_until TEXT,
@@ -117,6 +123,7 @@ CREATE TABLE IF NOT EXISTS record_events (
       'withdrawn',
       'associated',
       'evidence_added',
+      'validation_changed',
       'tag_added',
       'export_visibility_changed'
     )
@@ -155,4 +162,3 @@ CREATE TRIGGER IF NOT EXISTS records_au AFTER UPDATE ON records BEGIN
   INSERT INTO records_fts(rowid, subject, summary, body)
   VALUES (new.rowid, new.subject, new.summary, new.body);
 END;
-

@@ -12,6 +12,7 @@ The core idea is:
 - Records are append-friendly and audit-oriented.
 - Dot-separated subjects provide a stable namespace tree.
 - Evidence links make claims inspectable.
+- Validation state distinguishes checked claims from unvalidated ideas.
 - Associations form a graph across records when namespace alone is not enough.
 - Static HTML exports make any namespace subtree browsable in nginx.
 - Markdown and static HTML remain readable projections, not the source of truth.
@@ -100,6 +101,30 @@ Add a thought:
   --tag mcp \
   --tag oidc
 ```
+
+Set validation state separately from lifecycle status:
+
+```bash
+./bin/decisions add connected-ai.auth.oidc.client-persistence \
+  --kind finding \
+  --status active \
+  --validation-state partially_validated \
+  --summary "Dynamic clients may be clobbered" \
+  --body "This has supporting evidence, but has not yet been reproduced end to end."
+
+./bin/decisions validate rec_... \
+  --state validated \
+  --validated-by neil \
+  --note "Confirmed against current OpenIddictApplications rows and restart logs"
+```
+
+`status` is lifecycle/currentness. `validation_state` is epistemic quality:
+
+- `unvalidated`: captured but not checked
+- `partially_validated`: some supporting evidence, still incomplete
+- `validated`: checked against sufficient evidence for the current use
+- `contested`: credible evidence or review challenges it
+- `invalidated`: evidence shows it should not be treated as true
 
 Attach evidence:
 
@@ -206,6 +231,7 @@ The MCP server exposes tools for:
 - `decision_rebuild_projection`
 - `decision_add_record`
 - `decision_add_evidence`
+- `decision_validate_record`
 - `decision_associate_records`
 - `decision_supersede_record`
 - `decision_supersede_subject_before`
@@ -227,6 +253,9 @@ The MCP surface deliberately bakes in usage guidance:
   projection
 - gather current subject context before making durable claims
 - prefer current records for reasoning
+- keep lifecycle status separate from validation state
+- prefer validated records for audit-sensitive factual claims
+- label uncertainty when relying on unvalidated or partially validated records
 - treat superseded records as audit history unless explicitly requested
 - supersede or withdraw records instead of deleting them for normal forgetting
 - attach evidence for audit-worthy claims

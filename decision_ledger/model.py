@@ -8,6 +8,7 @@ from typing import Any
 
 CURRENT_STATUSES = ("active", "proposed", "accepted", "resolved")
 OBSOLETE_STATUSES = ("superseded", "rejected", "withdrawn", "archived")
+VALIDATION_STATES = ("unvalidated", "partially_validated", "validated", "contested", "invalidated")
 SYMMETRIC_RELATIONS = {"associated_with", "duplicates"}
 
 
@@ -36,4 +37,3 @@ def rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
 
 def json_dumps(value: Any) -> str:
     return json.dumps(value, indent=2, sort_keys=True)
-
