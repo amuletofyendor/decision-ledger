@@ -113,3 +113,56 @@ Bulk supersede records under a namespace before a timestamp:
 
 Commands that support `--json` produce stable machine-readable output for
 future agent integration.
+
+## MCP Server
+
+The repo also includes a dependency-free stdio MCP server:
+
+```bash
+./bin/decision-ledger-mcp
+```
+
+Use a specific ledger with `--db` or `DECISION_LEDGER_DB`:
+
+```bash
+./bin/decision-ledger-mcp --db ~/.decision-ledger/ledger.sqlite
+```
+
+Example Codex MCP config:
+
+```toml
+[mcp_servers.decision-ledger]
+command = "/home/neil/Dev/decision-ledger/bin/decision-ledger-mcp"
+args = ["--db", "/home/neil/.decision-ledger/ledger.sqlite"]
+```
+
+The MCP server exposes tools for:
+
+- `decision_guidance`
+- `decision_add_record`
+- `decision_add_evidence`
+- `decision_associate_records`
+- `decision_supersede_record`
+- `decision_supersede_subject_before`
+- `decision_gather`
+- `decision_search`
+- `decision_show_record`
+- `decision_list_records`
+
+It also exposes prompt templates:
+
+- `decision-ledger-best-practices`
+- `capture-decision-context`
+
+The MCP surface deliberately bakes in usage guidance:
+
+- gather current subject context before making durable claims
+- prefer current records for reasoning
+- treat superseded records as audit history unless explicitly requested
+- supersede or withdraw records instead of deleting them for normal forgetting
+- attach evidence for audit-worthy claims
+- associate records across namespaces when subject prefix alone is insufficient
+
+The implementation follows the MCP stdio shape: newline-delimited JSON-RPC on
+stdin/stdout, no stdout logging, `initialize`, `tools/list`, `tools/call`,
+`prompts/list`, and `prompts/get`.
