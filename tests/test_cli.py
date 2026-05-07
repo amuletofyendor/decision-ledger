@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from decision_ledger.cli import main
+from decision_ledger.db import connect
 
 
 def run_cli(db_path: Path, *args: str) -> int:
@@ -137,6 +138,97 @@ def test_evidence_association_and_gather(tmp_path: Path, capsys) -> None:
     event_text = (tmp_path / "events" / "connected-ai" / "auth" / "oidc.jsonl").read_text(encoding="utf-8")
     assert '"event_type":"evidence_added"' in event_text
     assert '"event_type":"associated"' in event_text
+
+
+def test_cli_accepts_idea_kind(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    assert run_cli(
+        db_path,
+        "add",
+        "connected-ai.auth.oidc.client-persistence",
+        "--kind",
+        "idea",
+        "--summary",
+        "Try preserving clients",
+        "--body",
+        "Idea: preserve dynamic clients across identity restarts.",
+        "--json",
+    ) == 0
+    record_id = json.loads(capsys.readouterr().out)["id"]
+
+    assert run_cli(db_path, "show", record_id, "--json") == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["kind"] == "idea"
+
+
+def test_existing_db_kind_constraint_migrates_for_ideas(tmp_path: Path) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+    raw = sqlite3.connect(db_path)
+    raw.executescript(
+        """
+        CREATE TABLE records (
+          id TEXT PRIMARY KEY,
+          subject TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (
+            kind IN ('thought', 'decision', 'assumption', 'question', 'finding', 'plan', 'note')
+          ),
+          status TEXT NOT NULL CHECK (
+            status IN ('active', 'proposed', 'accepted', 'rejected', 'superseded', 'withdrawn', 'resolved', 'archived')
+          ),
+          validation_state TEXT NOT NULL DEFAULT 'unvalidated' CHECK (
+            validation_state IN ('unvalidated', 'partially_validated', 'validated', 'contested', 'invalidated')
+          ),
+          summary TEXT,
+          body TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          created_by TEXT,
+          validated_at TEXT,
+          validated_by TEXT,
+          validation_note TEXT,
+          updated_at TEXT,
+          valid_from TEXT,
+          valid_until TEXT,
+          export_visibility TEXT NOT NULL DEFAULT 'private' CHECK (
+            export_visibility IN ('private', 'internal', 'shareable', 'public')
+          )
+        );
+        INSERT INTO records (
+          rowid, id, subject, kind, status, validation_state, summary, body,
+          created_at, updated_at, valid_from, export_visibility
+        )
+        VALUES (
+          7, 'rec_old', 'decision-ledger.test', 'thought', 'active', 'unvalidated',
+          'Old thought', 'Existing content survives migration.', '2026-05-07T10:00:00+01:00',
+          '2026-05-07T10:00:00+01:00', '2026-05-07T10:00:00+01:00', 'private'
+        );
+        """
+    )
+    raw.close()
+
+    conn = connect(db_path)
+    table_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'records'"
+    ).fetchone()["sql"]
+    assert "'idea'" in table_sql
+    conn.execute(
+        """
+        INSERT INTO records (
+          id, subject, kind, status, validation_state, summary, body,
+          created_at, updated_at, valid_from, export_visibility
+        )
+        VALUES (
+          'rec_idea', 'decision-ledger.idea', 'idea', 'active', 'unvalidated',
+          'New idea', 'A migrated ledger can store ideas.', '2026-05-07T11:00:00+01:00',
+          '2026-05-07T11:00:00+01:00', '2026-05-07T11:00:00+01:00', 'private'
+        )
+        """
+    )
+    conn.commit()
+
+    assert conn.execute("SELECT kind FROM records WHERE id = 'rec_old'").fetchone()["kind"] == "thought"
+    assert conn.execute("SELECT kind FROM records WHERE id = 'rec_idea'").fetchone()["kind"] == "idea"
+    assert conn.execute("SELECT rowid FROM records_fts WHERE records_fts MATCH 'survives'").fetchone()["rowid"] == 7
 
 
 def test_topics_lists_subject_tree_counts(tmp_path: Path, capsys) -> None:

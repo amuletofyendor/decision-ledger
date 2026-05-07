@@ -53,6 +53,8 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "decision_list_topics" in tool_names
     assert "decision_export_wiki" not in tool_names
     assert all("inputSchema" in tool for tool in tools)
+    add_record_tool = next(tool for tool in tools if tool["name"] == "decision_add_record")
+    assert "idea" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
 
     prompts = request(server, "prompts/list")["result"]["prompts"]
     assert {prompt["name"] for prompt in prompts} == {
@@ -84,6 +86,7 @@ def test_prompt_get_bakes_in_usage_guidance(tmp_path: Path) -> None:
     assert "decision-wiki-server" in text
     assert "localhost port" in text
     assert "validation_state" in text
+    assert "add it as an idea" in text
     assert "Do not delete audit history" in text
 
 
@@ -95,8 +98,8 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
         "decision_add_record",
         {
             "subject": "connected-ai.auth.oidc",
-            "kind": "thought",
-            "summary": "Old thought",
+            "kind": "idea",
+            "summary": "Old idea",
             "body": "Older OIDC idea.",
             "tags": ["oidc"],
         },

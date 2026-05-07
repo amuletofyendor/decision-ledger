@@ -11,7 +11,7 @@ from . import __version__
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .guidance import CAPTURE_PROMPT, SERVER_INSTRUCTIONS, TOOL_GUIDANCE
-from .model import VALIDATION_STATES, json_dumps
+from .model import RECORD_KINDS, VALIDATION_STATES, json_dumps
 
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -163,8 +163,8 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 TOOL_GUIDANCE["decision_add_record"],
                 {
                     "subject": string_schema("Dot-separated primary subject, for example connected-ai.auth.oidc.client-persistence."),
-                    "body": string_schema("Free-form thought, decision, assumption, question, finding, plan, or note body."),
-                    "kind": enum_schema(["thought", "decision", "assumption", "question", "finding", "plan", "note"], "Record kind."),
+                    "body": string_schema("Free-form thought, idea, decision, assumption, question, finding, plan, or note body."),
+                    "kind": enum_schema(list(RECORD_KINDS), "Record kind."),
                     "status": enum_schema(["active", "proposed", "accepted", "rejected", "superseded", "withdrawn", "resolved", "archived"], "Record status."),
                     "validation_state": enum_schema(list(VALIDATION_STATES), "Validation state. Keep this separate from lifecycle status."),
                     "summary": string_schema("Short human-readable summary."),

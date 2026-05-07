@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Any
 
-from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, VALIDATION_STATES, new_id, now_iso, parse_datetime
+from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, RECORD_KINDS, VALIDATION_STATES, new_id, now_iso, parse_datetime
 
 
 class Ledger:
@@ -25,6 +25,7 @@ class Ledger:
         export_visibility: str = "private",
         validation_state: str = "unvalidated",
     ) -> str:
+        validate_record_kind(kind)
         validate_validation_state(validation_state)
         record_id = new_id("rec")
         created_at = now_iso()
@@ -590,3 +591,9 @@ def validate_validation_state(validation_state: str) -> None:
     if validation_state not in VALIDATION_STATES:
         allowed = ", ".join(VALIDATION_STATES)
         raise ValueError(f"unknown validation state: {validation_state}; expected one of {allowed}")
+
+
+def validate_record_kind(kind: str) -> None:
+    if kind not in RECORD_KINDS:
+        allowed = ", ".join(RECORD_KINDS)
+        raise ValueError(f"unknown record kind: {kind}; expected one of {allowed}")

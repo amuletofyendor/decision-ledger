@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 from .db import connect
 from .model import new_id, now_iso, parse_datetime
-from .repository import Ledger, validate_validation_state
+from .repository import Ledger, validate_record_kind, validate_validation_state
 
 
 DEFAULT_LEDGER_HOME = Path.home() / ".decision-ledger"
@@ -140,6 +140,7 @@ class EventedLedger:
         export_visibility: str = "private",
         validation_state: str = "unvalidated",
     ) -> str:
+        validate_record_kind(kind)
         validate_validation_state(validation_state)
         record_id = new_id("rec")
         created_at = now_iso()
@@ -376,6 +377,7 @@ def apply_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
 
 def apply_record_created(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
     payload = event["payload"]
+    validate_record_kind(payload["kind"])
     created_at = payload.get("created_at") or event["created_at"]
     conn.execute(
         """

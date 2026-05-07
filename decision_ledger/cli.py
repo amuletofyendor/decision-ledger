@@ -8,7 +8,7 @@ from typing import Any
 
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
-from .model import VALIDATION_STATES, json_dumps
+from .model import RECORD_KINDS, VALIDATION_STATES, json_dumps
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add = subparsers.add_parser("add", help="Add a record")
     add.add_argument("subject")
-    add.add_argument("--kind", default="thought", choices=["thought", "decision", "assumption", "question", "finding", "plan", "note"])
+    add.add_argument("--kind", default="thought", choices=RECORD_KINDS)
     add.add_argument("--status", default="active", choices=["active", "proposed", "accepted", "rejected", "superseded", "withdrawn", "resolved", "archived"])
     add.add_argument("--validation-state", default="unvalidated", choices=VALIDATION_STATES)
     add.add_argument("--summary")

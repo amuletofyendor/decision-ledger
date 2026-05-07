@@ -22,6 +22,7 @@ def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
 def apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     migrate_validation_columns(conn)
+    migrate_record_kind_idea(conn)
     migrate_record_events_validation_type(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_records_validation_state ON records(validation_state)")
     conn.commit()
@@ -43,6 +44,96 @@ def migrate_validation_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE records ADD COLUMN validated_by TEXT")
     if "validation_note" not in columns:
         conn.execute("ALTER TABLE records ADD COLUMN validation_note TEXT")
+
+
+def migrate_record_kind_idea(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        """
+        SELECT sql
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'records'
+        """
+    ).fetchone()
+    if not row or "'idea'" in (row["sql"] or ""):
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.executescript(
+            """
+            DROP TRIGGER IF EXISTS records_ai;
+            DROP TRIGGER IF EXISTS records_ad;
+            DROP TRIGGER IF EXISTS records_au;
+
+            CREATE TABLE records_new (
+              id TEXT PRIMARY KEY,
+              subject TEXT NOT NULL,
+              kind TEXT NOT NULL CHECK (
+                kind IN ('thought', 'idea', 'decision', 'assumption', 'question', 'finding', 'plan', 'note')
+              ),
+              status TEXT NOT NULL CHECK (
+                status IN ('active', 'proposed', 'accepted', 'rejected', 'superseded', 'withdrawn', 'resolved', 'archived')
+              ),
+              validation_state TEXT NOT NULL DEFAULT 'unvalidated' CHECK (
+                validation_state IN ('unvalidated', 'partially_validated', 'validated', 'contested', 'invalidated')
+              ),
+              summary TEXT,
+              body TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              created_by TEXT,
+              validated_at TEXT,
+              validated_by TEXT,
+              validation_note TEXT,
+              updated_at TEXT,
+              valid_from TEXT,
+              valid_until TEXT,
+              export_visibility TEXT NOT NULL DEFAULT 'private' CHECK (
+                export_visibility IN ('private', 'internal', 'shareable', 'public')
+              )
+            );
+
+            INSERT INTO records_new (
+              rowid, id, subject, kind, status, validation_state, summary, body,
+              created_at, created_by, validated_at, validated_by, validation_note,
+              updated_at, valid_from, valid_until, export_visibility
+            )
+            SELECT
+              rowid, id, subject, kind, status, validation_state, summary, body,
+              created_at, created_by, validated_at, validated_by, validation_note,
+              updated_at, valid_from, valid_until, export_visibility
+            FROM records;
+
+            DROP TABLE records;
+            ALTER TABLE records_new RENAME TO records;
+
+            CREATE INDEX IF NOT EXISTS idx_records_subject ON records(subject);
+            CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+            CREATE INDEX IF NOT EXISTS idx_records_kind ON records(kind);
+            CREATE INDEX IF NOT EXISTS idx_records_created_at ON records(created_at);
+            CREATE INDEX IF NOT EXISTS idx_records_validation_state ON records(validation_state);
+
+            CREATE TRIGGER IF NOT EXISTS records_ai AFTER INSERT ON records BEGIN
+              INSERT INTO records_fts(rowid, subject, summary, body)
+              VALUES (new.rowid, new.subject, new.summary, new.body);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS records_ad AFTER DELETE ON records BEGIN
+              INSERT INTO records_fts(records_fts, rowid, subject, summary, body)
+              VALUES ('delete', old.rowid, old.subject, old.summary, old.body);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS records_au AFTER UPDATE ON records BEGIN
+              INSERT INTO records_fts(records_fts, rowid, subject, summary, body)
+              VALUES ('delete', old.rowid, old.subject, old.summary, old.body);
+              INSERT INTO records_fts(rowid, subject, summary, body)
+              VALUES (new.rowid, new.subject, new.summary, new.body);
+            END;
+
+            INSERT INTO records_fts(records_fts) VALUES ('rebuild');
+            """
+        )
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def migrate_record_events_validation_type(conn: sqlite3.Connection) -> None:

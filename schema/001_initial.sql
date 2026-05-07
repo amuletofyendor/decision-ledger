@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS records (
   id TEXT PRIMARY KEY,
   subject TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (
-    kind IN ('thought', 'decision', 'assumption', 'question', 'finding', 'plan', 'note')
+    kind IN ('thought', 'idea', 'decision', 'assumption', 'question', 'finding', 'plan', 'note')
   ),
   status TEXT NOT NULL CHECK (
     status IN ('active', 'proposed', 'accepted', 'rejected', 'superseded', 'withdrawn', 'resolved', 'archived')

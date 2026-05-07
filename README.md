@@ -1,9 +1,9 @@
 # Decision Ledger
 
-Decision Ledger is a local-first record of thoughts, decisions, assumptions,
-questions, evidence, and associations. It is intended to give humans and LLM
-agents a shared, auditable memory that is more precise than loose markdown, but
-still easy to browse.
+Decision Ledger is a local-first record of thoughts, ideas, decisions,
+assumptions, questions, evidence, and associations. It is intended to give
+humans and LLM agents a shared, auditable memory that is more precise than
+loose markdown, but still easy to browse.
 
 The core idea is:
 
@@ -90,16 +90,20 @@ Rebuild the SQLite projection from canonical event files:
 ./bin/decisions rebuild
 ```
 
-Add a thought:
+Add an idea:
 
 ```bash
 ./bin/decisions add connected-ai.auth.oidc.client-persistence \
-  --kind thought \
+  --kind idea \
   --summary "MCP dynamic clients may be clobbered by identity restarts" \
-  --body "Working thought: dynamic clients may be overwritten by another identity deployment sharing the same backing DB." \
+  --body "Idea: dynamic clients may be overwritten by another identity deployment sharing the same backing DB." \
   --tag mcp \
   --tag oidc
 ```
+
+Use `kind=idea` for possible directions that have not yet been chosen. When an
+idea becomes the selected direction, create a `kind=decision` record and link or
+supersede the idea record if that history will matter later.
 
 Set validation state separately from lifecycle status:
 

@@ -31,7 +31,7 @@ Best practices:
   evidence, tags, and related subjects structured.
 - Preserve the user's information. Do not shrink or pare down important detail
   just to make a tidy record. Instead, split long material into enough linked
-  records that each separable decision, assumption, question, finding, or plan
+  records that each separable idea, decision, assumption, question, finding, or plan
   can carry its own subject, kind, status, evidence, tags, and supersession path.
 - Capture decisions and ideas even when they seem small, incidental, or
   unfinished. The intention is to retain as many useful fragments as possible
@@ -55,8 +55,9 @@ Best practices:
 CAPTURE_PROMPT = """Use Decision Ledger while working:
 
 1. Gather current context with decision_gather for the relevant subject prefix.
-2. If the user introduces a new idea, add it as a thought or question.
-3. If the user chooses a direction, add or update by creating a decision record.
+2. If the user introduces a new idea, add it as an idea.
+3. If the user chooses a direction, create a decision record and associate or
+   supersede the idea record it came from when that relationship matters.
 4. Attach evidence links for files, URLs, commands, tickets, logs, or artifacts.
 5. Set validation_state separately from status. Default to unvalidated until a
    claim has been checked against evidence; mark contested or invalidated when
@@ -80,7 +81,7 @@ Do not delete audit history for normal forgetting. Supersede it and explain why.
 TOOL_GUIDANCE = {
     "decision_guidance": "Return the built-in Decision Ledger operating guidance. Call this when uncertain how to use the ledger.",
     "decision_rebuild_projection": "Rebuild the generated SQLite projection from canonical namespace JSONL event files. Use after pulling event changes from git or when SQLite is missing/stale.",
-    "decision_add_record": "Create a thought, decision, assumption, question, finding, plan, or note. Use for durable context the user may want to retrieve later.",
+    "decision_add_record": "Create a thought, idea, decision, assumption, question, finding, plan, or note. Use for durable context the user may want to retrieve later.",
     "decision_add_evidence": "Attach evidence to an existing record. Prefer this for audit-worthy claims, live checks, source files, URLs, commands, and captured artifacts.",
     "decision_validate_record": "Change a record's validation state without changing its lifecycle status. Use validated for checked claims, contested for disputed claims, and invalidated when evidence disproves a record.",
     "decision_associate_records": "Create a graph link between two records when subject namespace alone does not capture their relationship.",
