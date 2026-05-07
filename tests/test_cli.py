@@ -31,6 +31,12 @@ def test_add_show_and_search(tmp_path: Path, capsys) -> None:
         "--json",
     ) == 0
     record_id = json.loads(capsys.readouterr().out)["id"]
+    event_file = tmp_path / "events" / "connected-ai" / "auth" / "oidc" / "client-persistence.jsonl"
+    assert event_file.exists()
+    event = json.loads(event_file.read_text(encoding="utf-8").splitlines()[0])
+    assert event["event_type"] == "created"
+    assert event["record_id"] == record_id
+    assert event["subject"] == "connected-ai.auth.oidc.client-persistence"
 
     assert run_cli(db_path, "show", record_id, "--json") == 0
     record = json.loads(capsys.readouterr().out)
@@ -40,6 +46,20 @@ def test_add_show_and_search(tmp_path: Path, capsys) -> None:
     assert run_cli(db_path, "search", "OpenIddict", "--json") == 0
     results = json.loads(capsys.readouterr().out)
     assert [row["id"] for row in results] == [record_id]
+
+    db_path.unlink()
+    assert run_cli(db_path, "show", record_id, "--json") == 0
+    auto_rebuilt_record = json.loads(capsys.readouterr().out)
+    assert auto_rebuilt_record["summary"] == "Persist dynamic clients"
+
+    db_path.unlink()
+    assert run_cli(db_path, "rebuild", "--json") == 0
+    rebuild = json.loads(capsys.readouterr().out)
+    assert rebuild["db_path"] == str(db_path)
+
+    assert run_cli(db_path, "show", record_id, "--json") == 0
+    rebuilt_record = json.loads(capsys.readouterr().out)
+    assert rebuilt_record["summary"] == "Persist dynamic clients"
 
 
 def test_evidence_association_and_gather(tmp_path: Path, capsys) -> None:
@@ -83,6 +103,10 @@ def test_evidence_association_and_gather(tmp_path: Path, capsys) -> None:
     assert [row["id"] for row in gathered["current"]] == [first_id]
     assert [row["id"] for row in gathered["associated"]] == [second_id]
     assert gathered["evidence"][0]["uri"] == "/tmp/source.cs"
+
+    event_text = (tmp_path / "events" / "connected-ai" / "auth" / "oidc.jsonl").read_text(encoding="utf-8")
+    assert '"event_type":"evidence_added"' in event_text
+    assert '"event_type":"associated"' in event_text
 
 
 def test_topics_lists_subject_tree_counts(tmp_path: Path, capsys) -> None:

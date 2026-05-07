@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import traceback
 from pathlib import Path
 from typing import Any, Callable
 
 from . import __version__
-from .db import DEFAULT_DB_PATH, connect
+from .db import connect
+from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .guidance import CAPTURE_PROMPT, SERVER_INSTRUCTIONS, TOOL_GUIDANCE
 from .model import json_dumps
-from .repository import Ledger
 from .wiki_export import export_static_wiki
 
 
@@ -25,19 +24,23 @@ ToolHandler = Callable[[JsonObject], Any]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="decision-ledger-mcp", description="Decision Ledger MCP stdio server")
-    parser.add_argument("--db", help=f"SQLite DB path (default: {DEFAULT_DB_PATH})")
+    parser.add_argument("--home", help=f"Ledger home containing events/ and ledger.sqlite (default: nearest .decision-ledger or {DEFAULT_LEDGER_HOME})")
+    parser.add_argument("--db", help="SQLite projection path (default: <ledger home>/ledger.sqlite)")
     args = parser.parse_args(argv)
-    db_path = Path(args.db or os.environ.get("DECISION_LEDGER_DB") or DEFAULT_DB_PATH).expanduser()
-    server = MCPServer(db_path)
+    server = MCPServer(paths=resolve_ledger_paths(db_path=args.db, home=args.home))
     server.serve()
     return 0
 
 
 class MCPServer:
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
-        self.conn = connect(db_path)
-        self.ledger = Ledger(self.conn)
+    def __init__(self, db_path: Path | None = None, *, paths: LedgerPaths | None = None):
+        self.paths = paths or resolve_ledger_paths(db_path=db_path)
+        db_existed = self.paths.db_path.exists()
+        self.conn = connect(self.paths.db_path)
+        event_store = EventStore(self.paths.home)
+        self.ledger = EventedLedger(self.conn, event_store, self.paths.db_path)
+        if not db_existed and event_store.has_events():
+            self.ledger.rebuild()
         self.tools: dict[str, tuple[JsonObject, ToolHandler]] = build_tools(self.ledger)
 
     def serve(self) -> None:
@@ -134,7 +137,7 @@ class MCPServer:
         return tool_result(result)
 
 
-def build_tools(ledger: Ledger) -> dict[str, tuple[JsonObject, ToolHandler]]:
+def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandler]]:
     return {
         "decision_guidance": (
             tool_definition(
@@ -144,6 +147,15 @@ def build_tools(ledger: Ledger) -> dict[str, tuple[JsonObject, ToolHandler]]:
                 {},
             ),
             lambda _args: {"instructions": SERVER_INSTRUCTIONS},
+        ),
+        "decision_rebuild_projection": (
+            tool_definition(
+                "decision_rebuild_projection",
+                "Rebuild SQLite Projection",
+                "Rebuild the generated SQLite projection from canonical namespace JSONL event files. Use after pulling event changes from git or when the projection is missing/stale.",
+                {},
+            ),
+            lambda _args: rebuild_projection_tool(ledger),
         ),
         "decision_add_record": (
             tool_definition(
@@ -421,7 +433,12 @@ def tool_result(value: Any) -> JsonObject:
     }
 
 
-def supersede_record_tool(ledger: Ledger, args: JsonObject) -> JsonObject:
+def rebuild_projection_tool(ledger: EventedLedger) -> JsonObject:
+    ledger.rebuild()
+    return {"rebuilt": True, "db_path": str(ledger.db_path), "events_dir": str(ledger.event_store.events_dir)}
+
+
+def supersede_record_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
     old_record_id = require_str(args, "old_record_id")
     ledger.supersede_record(
         old_record_id=old_record_id,
@@ -433,7 +450,7 @@ def supersede_record_tool(ledger: Ledger, args: JsonObject) -> JsonObject:
     return {"superseded": [old_record_id]}
 
 
-def require_record_result(ledger: Ledger, record_id: str) -> JsonObject:
+def require_record_result(ledger: EventedLedger, record_id: str) -> JsonObject:
     record = ledger.get_record(record_id)
     if record is None:
         raise ValueError(f"record not found: {record_id}")

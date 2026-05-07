@@ -7,13 +7,14 @@ still easy to browse and export.
 
 The core idea is:
 
-- SQLite is the canonical store.
+- Namespace JSONL event files are the canonical store.
+- SQLite is a generated projection for fast query, search, and export.
 - Records are append-friendly and audit-oriented.
 - Dot-separated subjects provide a stable namespace tree.
 - Evidence links make claims inspectable.
 - Associations form a graph across records when namespace alone is not enough.
 - Static HTML exports make any namespace subtree browsable in nginx.
-- Markdown remains a readable projection, not the source of truth.
+- Markdown and static HTML remain readable projections, not the source of truth.
 
 The detailed plan is in [docs/decision-ledger-plan.md](docs/decision-ledger-plan.md).
 
@@ -49,16 +50,44 @@ Run the CLI from this repo:
 ./bin/decisions init
 ```
 
-By default this creates or migrates:
+By default this creates or migrates the nearest `.decision-ledger` folder found
+by walking upward from the current directory. If none is found, it uses:
 
 ```text
 ~/.decision-ledger/ledger.sqlite
 ```
 
-Use `--db` or `DECISION_LEDGER_DB` for a different ledger:
+Use `--home`, `DECISION_LEDGER_HOME`, `--db`, or `DECISION_LEDGER_DB` for a
+different ledger:
 
 ```bash
+./bin/decisions --home ./.decision-ledger init
 ./bin/decisions --db /tmp/ledger.sqlite init
+```
+
+The canonical git-friendly layout is:
+
+```text
+.decision-ledger/
+  events/
+    connected-ai/
+      auth/
+        oidc/
+          client-persistence.jsonl
+  ledger.sqlite
+```
+
+Commit `events/**/*.jsonl`. Treat `ledger.sqlite` as generated; this repo's
+`.gitignore` ignores `*.sqlite`.
+
+CLI and MCP write operations append to `events/<subject path>.jsonl` first, then
+apply the same event into SQLite. If `ledger.sqlite` is missing but event files
+exist, the projection is rebuilt automatically on startup.
+
+Rebuild the SQLite projection from canonical event files:
+
+```bash
+./bin/decisions rebuild
 ```
 
 Add a thought:
@@ -174,6 +203,7 @@ args = ["--db", "/home/neil/.decision-ledger/ledger.sqlite"]
 The MCP server exposes tools for:
 
 - `decision_guidance`
+- `decision_rebuild_projection`
 - `decision_add_record`
 - `decision_add_evidence`
 - `decision_associate_records`
@@ -193,6 +223,8 @@ It also exposes prompt templates:
 
 The MCP surface deliberately bakes in usage guidance:
 
+- treat namespace JSONL event files as canonical and SQLite as a generated
+  projection
 - gather current subject context before making durable claims
 - prefer current records for reasoning
 - treat superseded records as audit history unless explicitly requested

@@ -46,6 +46,7 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
 
     tools = request(server, "tools/list")["result"]["tools"]
     tool_names = {tool["name"] for tool in tools}
+    assert "decision_rebuild_projection" in tool_names
     assert "decision_add_record" in tool_names
     assert "decision_supersede_subject_before" in tool_names
     assert "decision_list_topics" in tool_names
@@ -133,6 +134,17 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
     assert [row["id"] for row in gathered["current"]] == [new]
     assert [row["id"] for row in gathered["obsolete"]] == [old]
     assert gathered["evidence"][0]["uri"] == "https://example.test/evidence"
+
+    event_file = tmp_path / "events" / "connected-ai" / "auth" / "oidc.jsonl"
+    assert event_file.exists()
+    assert '"event_type":"superseded"' in event_file.read_text(encoding="utf-8")
+
+    (tmp_path / "ledger.sqlite").unlink()
+    rebuild = tool_call(server, "decision_rebuild_projection", {})
+    assert rebuild["rebuilt"] is True
+
+    rebuilt = tool_call(server, "decision_show_record", {"record_id": new})
+    assert rebuilt["summary"] == "New decision"
 
 
 def test_batch_response_is_single_json_rpc_array(tmp_path: Path) -> None:

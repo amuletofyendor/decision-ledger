@@ -9,6 +9,8 @@ context, decision_search for fuzzy recall, and decision_show_record for exact
 audit detail.
 
 Best practices:
+- Treat namespace JSONL event files as canonical. SQLite is a generated
+  projection for fast query/search/export and can be rebuilt from events.
 - Treat subject prefixes as deterministic scope and associations as graph scope.
 - Prefer active, proposed, accepted, and resolved records for current reasoning.
 - Do not treat superseded, rejected, withdrawn, or archived records as current
@@ -55,6 +57,7 @@ Do not delete audit history for normal forgetting. Supersede it and explain why.
 
 TOOL_GUIDANCE = {
     "decision_guidance": "Return the built-in Decision Ledger operating guidance. Call this when uncertain how to use the ledger.",
+    "decision_rebuild_projection": "Rebuild the generated SQLite projection from canonical namespace JSONL event files. Use after pulling event changes from git or when SQLite is missing/stale.",
     "decision_add_record": "Create a thought, decision, assumption, question, finding, plan, or note. Use for durable context the user may want to retrieve later.",
     "decision_add_evidence": "Attach evidence to an existing record. Prefer this for audit-worthy claims, live checks, source files, URLs, commands, and captured artifacts.",
     "decision_associate_records": "Create a graph link between two records when subject namespace alone does not capture their relationship.",

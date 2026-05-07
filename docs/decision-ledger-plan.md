@@ -69,8 +69,10 @@ template.
 
 Markdown and static HTML are useful views, but they should not be canonical.
 
-The canonical source should be SQLite. From it we can generate:
+The canonical source should be namespace-scoped JSONL event files. From those
+events we can regenerate:
 
+- SQLite query projections
 - markdown summaries
 - static HTML wiki exports
 - JSON search indexes
@@ -279,14 +281,37 @@ related_subjects:
 
 ## 4. Canonical Storage
 
-## 4.1 SQLite First
+## 4.1 Namespace JSONL Events First
 
-SQLite is the best starting point.
+The canonical store is an append-only set of JSONL event files under the
+dot-separated subject tree.
+
+Example:
+
+```text
+.decision-ledger/
+  events/
+    connected-ai/
+      auth/
+        oidc/
+          client-persistence.jsonl
+  ledger.sqlite
+```
+
+Rules:
+
+- commit `events/**/*.jsonl`
+- treat `ledger.sqlite` as generated
+- write new events instead of editing old events for normal changes
+- include the subject in each event even though the path implies it
+- rebuild SQLite idempotently from the event tree
 
 Reasons:
 
 - local-first
 - simple backup story
+- git-friendly canonical history
+- smaller per-topic files with fewer merge conflicts
 - easy to query
 - supports joins
 - supports indexes over subject prefixes
@@ -297,7 +322,8 @@ Reasons:
 Recommended location:
 
 ```text
-~/.decision-ledger/ledger.sqlite
+<ledger-home>/events/<subject path>.jsonl
+<ledger-home>/ledger.sqlite
 ```
 
 For this repository, schema migrations live under:
@@ -761,7 +787,8 @@ Success criteria:
 Start with:
 
 ```text
-SQLite canonical store
+namespace JSONL events as canonical store
+SQLite as generated projection
 FTS5 for search
 explicit evidence table
 explicit association graph
@@ -781,4 +808,3 @@ Do not start with:
 
 This gives a small, durable system that can grow into richer retrieval without
 losing audit semantics.
-

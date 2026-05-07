@@ -2,25 +2,28 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
-from .db import DEFAULT_DB_PATH, connect
+from .db import connect
+from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .model import json_dumps
-from .repository import Ledger
 from .wiki_export import export_static_wiki
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    db_path = args.db or os.environ.get("DECISION_LEDGER_DB") or DEFAULT_DB_PATH
+    paths = resolve_ledger_paths(db_path=args.db, home=args.home)
     try:
-        conn = connect(db_path)
-        ledger = Ledger(conn)
-        return args.func(args, ledger, Path(db_path).expanduser())
+        db_existed = paths.db_path.exists()
+        conn = connect(paths.db_path)
+        event_store = EventStore(paths.home)
+        ledger = EventedLedger(conn, event_store, paths.db_path)
+        if not db_existed and event_store.has_events():
+            ledger.rebuild()
+        return args.func(args, ledger, paths)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -31,11 +34,16 @@ def main(argv: list[str] | None = None) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="decisions", description="Decision Ledger CLI")
-    parser.add_argument("--db", help=f"SQLite DB path (default: {DEFAULT_DB_PATH})")
+    parser.add_argument("--home", help=f"Ledger home containing events/ and ledger.sqlite (default: nearest .decision-ledger or {DEFAULT_LEDGER_HOME})")
+    parser.add_argument("--db", help="SQLite projection path (default: <ledger home>/ledger.sqlite)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init = subparsers.add_parser("init", help="Create or migrate the ledger database")
+    init = subparsers.add_parser("init", help="Create or migrate the event store and SQLite projection")
     init.set_defaults(func=cmd_init)
+
+    rebuild = subparsers.add_parser("rebuild", help="Rebuild the SQLite projection from canonical namespace event files")
+    rebuild.add_argument("--json", action="store_true")
+    rebuild.set_defaults(func=cmd_rebuild)
 
     add = subparsers.add_parser("add", help="Add a record")
     add.add_argument("subject")
@@ -145,12 +153,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def cmd_init(args: argparse.Namespace, _ledger: Ledger, db_path: Path) -> int:
-    print(f"ledger ready: {db_path}")
+def cmd_init(args: argparse.Namespace, _ledger: EventedLedger, paths: LedgerPaths) -> int:
+    paths.events_dir.mkdir(parents=True, exist_ok=True)
+    print(f"ledger ready: {paths.home}")
+    print(f"events: {paths.events_dir}")
+    print(f"sqlite projection: {paths.db_path}")
     return 0
 
 
-def cmd_add(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_rebuild(args: argparse.Namespace, ledger: EventedLedger, paths: LedgerPaths) -> int:
+    ledger.rebuild()
+    result = {
+        "home": str(paths.home),
+        "events_dir": str(paths.events_dir),
+        "db_path": str(paths.db_path),
+    }
+    output(result, args.json, fallback=f"rebuilt sqlite projection: {paths.db_path}")
+    return 0
+
+
+def cmd_add(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     body = read_body(args.body, args.body_file)
     record_id = ledger.add_record(
         subject=args.subject,
@@ -167,13 +189,13 @@ def cmd_add(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
     return 0
 
 
-def cmd_list(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_list(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     rows = [dict(row) for row in ledger.list_records(subject=args.subject, status=args.status, include_obsolete=args.all, limit=args.limit)]
     output(rows, args.json, fallback=format_rows(rows))
     return 0
 
 
-def cmd_topics(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_topics(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     topics = ledger.list_topics(
         subject=args.subject,
         include_obsolete=args.all,
@@ -183,7 +205,7 @@ def cmd_topics(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
     return 0
 
 
-def cmd_show(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_show(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     record = ledger.get_record(args.record_id)
     if not record:
         raise ValueError(f"record not found: {args.record_id}")
@@ -191,19 +213,19 @@ def cmd_show(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
     return 0
 
 
-def cmd_search(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_search(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     rows = [dict(row) for row in ledger.search(args.query, include_obsolete=args.all, limit=args.limit)]
     output(rows, args.json, fallback=format_rows(rows))
     return 0
 
 
-def cmd_gather(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_gather(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     gathered = ledger.gather(args.subject, include_obsolete=args.all)
     output(gathered, args.json, fallback=format_gathered(gathered))
     return 0
 
 
-def cmd_evidence_add(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_evidence_add(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     evidence_id = ledger.add_evidence(
         record_id=args.record_id,
         evidence_type=args.type,
@@ -219,7 +241,7 @@ def cmd_evidence_add(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -
     return 0
 
 
-def cmd_associate(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_associate(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     association_id = ledger.associate(
         from_record_id=args.from_record_id,
         to_record_id=args.to_record_id,
@@ -233,7 +255,7 @@ def cmd_associate(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> i
     return 0
 
 
-def cmd_supersede(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_supersede(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     replacement = args.replacement_option or args.replacement
     if not replacement:
         raise ValueError("replacement record id is required")
@@ -257,7 +279,7 @@ def cmd_supersede(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> i
     return 0
 
 
-def cmd_wiki(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+def cmd_wiki(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     result = export_static_wiki(
         ledger,
         subject=args.subject,
