@@ -33,6 +33,9 @@ Best practices:
   just to make a tidy record. Instead, split long material into enough linked
   records that each separable decision, assumption, question, finding, or plan
   can carry its own subject, kind, status, evidence, tags, and supersession path.
+- Capture decisions and ideas even when they seem small, incidental, or
+  unfinished. The intention is to retain as many useful fragments as possible
+  before they are lost to context compaction or buried in markdown documents.
 - Prefer one record per durable claim or decision when pieces may be retrieved,
   challenged, evidenced, tagged, or superseded independently. Keep shared
   background in a parent or context record and associate child records back to it.
@@ -65,7 +68,9 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
 9. Preserve detail, but split multi-decision material into linked records when
    separate parts need independent subjects, tags, evidence, statuses, or future
    supersession.
-10. If the user asks for a wiki, normally start decision-wiki-server on a free
+10. Do not skip capture just because a decision or idea seems small. Retain it
+   before context compaction or markdown burial can make it hard to recover.
+11. If the user asks for a wiki, normally start decision-wiki-server on a free
    localhost port so the user can browse current ledger data immediately.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.

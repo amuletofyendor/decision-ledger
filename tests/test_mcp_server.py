@@ -79,6 +79,8 @@ def test_prompt_get_bakes_in_usage_guidance(tmp_path: Path) -> None:
     assert "existing markdown contains durable decisions" in text
     assert "Preserve detail" in text
     assert "independent subjects, tags, evidence, statuses, or future" in text
+    assert "seems small" in text
+    assert "context compaction" in text
     assert "decision-wiki-server" in text
     assert "localhost port" in text
     assert "validation_state" in text
