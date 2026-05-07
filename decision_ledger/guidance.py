@@ -20,6 +20,13 @@ Best practices:
 - Add association notes that explain why records are linked.
 - Keep record bodies clear and free-form, but keep subject, kind, status,
   evidence, tags, and related subjects structured.
+- Preserve the user's information. Do not shrink or pare down important detail
+  just to make a tidy record. Instead, split long material into enough linked
+  records that each separable decision, assumption, question, finding, or plan
+  can carry its own subject, kind, status, evidence, tags, and supersession path.
+- Prefer one record per durable claim or decision when pieces may be retrieved,
+  challenged, evidenced, tagged, or superseded independently. Keep shared
+  background in a parent or context record and associate child records back to it.
 - When you find existing decisions, assumptions, or durable ideas buried in
   markdown, chat transcripts, tickets, or repo docs, process them into the
   decision tree as records and attach the source document as evidence.
@@ -38,6 +45,9 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
 6. Supersede older active records when the user says they are obsolete.
 7. If existing markdown contains durable decisions or ideas, import them into
    the subject tree and link the markdown file as evidence.
+8. Preserve detail, but split multi-decision material into linked records when
+   separate parts need independent subjects, tags, evidence, statuses, or future
+   supersession.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.
 """

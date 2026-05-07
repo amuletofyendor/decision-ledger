@@ -199,6 +199,9 @@ The MCP surface deliberately bakes in usage guidance:
 - supersede or withdraw records instead of deleting them for normal forgetting
 - attach evidence for audit-worthy claims
 - associate records across namespaces when subject prefix alone is insufficient
+- preserve detail rather than shrinking source material, but split multi-decision
+  material into linked records when parts need independent subjects, tags,
+  evidence, statuses, or supersession paths
 - process durable decisions and ideas buried in markdown, tickets, transcripts,
   or repo docs into the subject tree, with the source document as evidence
 - export namespace subtrees as static HTML audit packs when a browsable handover
