@@ -1,0 +1,45 @@
+id: rec_20260507_113012_abcd
+subject: connected-ai.auth.oidc.client-persistence
+kind: thought
+status: active
+created_at: "2026-05-07T11:30:12+01:00"
+created_by: neil
+summary: MCP dynamic clients may be clobbered by shared DB identity restarts.
+body: |
+  The working thought is that dynamic MCP clients are not simply disappearing
+  because the active API process forgot them. They may be overwritten or
+  removed when another identity deployment sharing the same backing database
+  restarts and runs older seeding or cleanup behavior.
+
+  This should be treated as a cross-environment identity persistence issue until
+  disproven with current database state, logs, and deployment restart evidence.
+tags:
+  - mcp
+  - oidc
+  - openiddict
+  - invalid_client
+related_subjects:
+  - connected-ai.environments.dev-aks.identity
+  - connected-ai.runtime.identity.restart-behavior
+evidence:
+  - type: file
+    uri: /home/neil/Dev/fc.identity
+    label: fc.identity repo
+    note: Identity service source and seeding behavior should be inspected here.
+    export_visibility: internal
+  - type: command
+    uri: "SELECT ClientId FROM OpenIddictApplications WHERE ClientId LIKE 'mcp[_]%';"
+    label: OpenIddict dynamic client check
+    note: Database query that proves whether MCP clients currently exist.
+    export_visibility: internal
+  - type: artifact
+    uri: /home/neil/Dev/docs/evidence/example-openiddict-mcp-clients.txt
+    label: Captured OpenIddict query output
+    note: Example placeholder for immutable captured evidence.
+    observed_at: "2026-05-07T11:35:00+01:00"
+    export_visibility: private
+associations:
+  - to: rec_20260507_120000_efgh
+    relation: depends_on
+    note: This thought depends on knowing which branch environments share the same Identity database.
+    source: manual
