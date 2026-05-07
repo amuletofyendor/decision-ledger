@@ -95,6 +95,12 @@ Gather current context for a namespace:
 ./bin/decisions gather connected-ai.auth
 ```
 
+List available topics in the subject tree:
+
+```bash
+./bin/decisions topics connected-ai.auth --direct
+```
+
 Supersede a single record:
 
 ```bash
@@ -177,6 +183,7 @@ The MCP server exposes tools for:
 - `decision_search`
 - `decision_show_record`
 - `decision_list_records`
+- `decision_list_topics`
 - `decision_export_wiki`
 
 It also exposes prompt templates:
@@ -192,6 +199,8 @@ The MCP surface deliberately bakes in usage guidance:
 - supersede or withdraw records instead of deleting them for normal forgetting
 - attach evidence for audit-worthy claims
 - associate records across namespaces when subject prefix alone is insufficient
+- process durable decisions and ideas buried in markdown, tickets, transcripts,
+  or repo docs into the subject tree, with the source document as evidence
 - export namespace subtrees as static HTML audit packs when a browsable handover
   is useful
 

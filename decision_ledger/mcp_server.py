@@ -336,6 +336,23 @@ def build_tools(ledger: Ledger) -> dict[str, tuple[JsonObject, ToolHandler]]:
                 limit=int(args.get("limit", 50)),
             )],
         ),
+        "decision_list_topics": (
+            tool_definition(
+                "decision_list_topics",
+                "List Decision Topics",
+                TOOL_GUIDANCE["decision_list_topics"],
+                {
+                    "subject": string_schema("Optional subject prefix to list under."),
+                    "include_obsolete": {"type": "boolean", "description": "Include obsolete records in topic counts."},
+                    "direct_only": {"type": "boolean", "description": "Only return the prefix and its direct child topics."},
+                },
+            ),
+            lambda args: ledger.list_topics(
+                subject=args.get("subject"),
+                include_obsolete=bool(args.get("include_obsolete", False)),
+                direct_only=bool(args.get("direct_only", False)),
+            ),
+        ),
         "decision_export_wiki": (
             tool_definition(
                 "decision_export_wiki",

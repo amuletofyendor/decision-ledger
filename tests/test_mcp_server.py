@@ -48,6 +48,7 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     tool_names = {tool["name"] for tool in tools}
     assert "decision_add_record" in tool_names
     assert "decision_supersede_subject_before" in tool_names
+    assert "decision_list_topics" in tool_names
     assert "decision_export_wiki" in tool_names
     assert all("inputSchema" in tool for tool in tools)
 
@@ -73,6 +74,7 @@ def test_prompt_get_bakes_in_usage_guidance(tmp_path: Path) -> None:
     text = response["result"]["messages"][0]["content"]["text"]
     assert "Subject focus: connected-ai.auth" in text
     assert "Gather current context" in text
+    assert "existing markdown contains durable decisions" in text
     assert "Do not delete audit history" in text
 
 
@@ -175,3 +177,40 @@ def test_mcp_export_wiki_tool(tmp_path: Path) -> None:
     assert result["records"] == 1
     assert "assets/search-index.json" in result["files"]
     assert (tmp_path / "wiki" / "records" / record_id / "index.html").exists()
+
+
+def test_mcp_list_topics_tool(tmp_path: Path) -> None:
+    server = MCPServer(tmp_path / "ledger.sqlite")
+
+    tool_call(
+        server,
+        "decision_add_record",
+        {
+            "subject": "connected-ai.auth.oidc",
+            "body": "OIDC thought.",
+        },
+    )
+    tool_call(
+        server,
+        "decision_add_record",
+        {
+            "subject": "connected-ai.auth.mcp",
+            "body": "MCP thought.",
+        },
+    )
+
+    topics = tool_call(
+        server,
+        "decision_list_topics",
+        {
+            "subject": "connected-ai.auth",
+            "direct_only": True,
+        },
+    )["result"]
+
+    assert [topic["subject"] for topic in topics] == [
+        "connected-ai.auth",
+        "connected-ai.auth.mcp",
+        "connected-ai.auth.oidc",
+    ]
+    assert topics[0]["subtree_records"] == 2

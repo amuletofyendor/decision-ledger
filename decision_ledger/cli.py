@@ -59,6 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.add_argument("--json", action="store_true")
     list_cmd.set_defaults(func=cmd_list)
 
+    topics = subparsers.add_parser("topics", help="List subject topics in the decision tree")
+    topics.add_argument("subject", nargs="?", help="Optional subject prefix to list under")
+    topics.add_argument("--all", action="store_true", help="Include obsolete records in topic counts")
+    topics.add_argument("--direct", action="store_true", help="Only show the prefix and its direct child topics")
+    topics.add_argument("--json", action="store_true")
+    topics.set_defaults(func=cmd_topics)
+
     show = subparsers.add_parser("show", help="Show a record")
     show.add_argument("record_id")
     show.add_argument("--json", action="store_true")
@@ -163,6 +170,16 @@ def cmd_add(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
 def cmd_list(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
     rows = [dict(row) for row in ledger.list_records(subject=args.subject, status=args.status, include_obsolete=args.all, limit=args.limit)]
     output(rows, args.json, fallback=format_rows(rows))
+    return 0
+
+
+def cmd_topics(args: argparse.Namespace, ledger: Ledger, _db_path: Path) -> int:
+    topics = ledger.list_topics(
+        subject=args.subject,
+        include_obsolete=args.all,
+        direct_only=args.direct,
+    )
+    output(topics, args.json, fallback=format_topics(topics))
     return 0
 
 
@@ -286,6 +303,19 @@ def format_rows(rows: list[dict[str, Any]]) -> str:
     for row in rows:
         summary = f" - {row['summary']}" if row.get("summary") else ""
         lines.append(f"{row['id']} [{row['status']}/{row['kind']}] {row['subject']}{summary}")
+    return "\n".join(lines)
+
+
+def format_topics(topics: list[dict[str, Any]]) -> str:
+    if not topics:
+        return "no topics"
+    lines = []
+    for topic in topics:
+        indent = "  " * (topic["depth"] - 1)
+        lines.append(
+            f"{indent}{topic['subject']} "
+            f"(direct {topic['direct_records']}, subtree {topic['subtree_records']}, children {topic['child_topics']})"
+        )
     return "\n".join(lines)
 
 

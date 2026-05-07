@@ -85,6 +85,40 @@ def test_evidence_association_and_gather(tmp_path: Path, capsys) -> None:
     assert gathered["evidence"][0]["uri"] == "/tmp/source.cs"
 
 
+def test_topics_lists_subject_tree_counts(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    run_cli(db_path, "add", "connected-ai.auth.oidc", "--body", "OIDC thought", "--json")
+    capsys.readouterr()
+    run_cli(db_path, "add", "connected-ai.auth.mcp", "--body", "MCP thought", "--json")
+    capsys.readouterr()
+    run_cli(
+        db_path,
+        "add",
+        "connected-ai.retrieval.wiki",
+        "--body",
+        "Wiki thought",
+        "--related-subject",
+        "connected-ai.auth.related-source",
+        "--json",
+    )
+    capsys.readouterr()
+
+    assert run_cli(db_path, "topics", "connected-ai.auth", "--direct", "--json") == 0
+    topics = json.loads(capsys.readouterr().out)
+    subjects = [topic["subject"] for topic in topics]
+    assert subjects == [
+        "connected-ai.auth",
+        "connected-ai.auth.mcp",
+        "connected-ai.auth.oidc",
+        "connected-ai.auth.related-source",
+    ]
+    root = topics[0]
+    assert root["direct_records"] == 0
+    assert root["subtree_records"] == 2
+    assert root["child_topics"] == 3
+
+
 def test_supersede_record(tmp_path: Path, capsys) -> None:
     db_path = tmp_path / "ledger.sqlite"
 

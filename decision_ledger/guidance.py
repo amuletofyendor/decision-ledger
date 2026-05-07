@@ -4,8 +4,9 @@ from __future__ import annotations
 SERVER_INSTRUCTIONS = """Decision Ledger is an audit-oriented memory surface.
 
 Use it before making or revising durable claims about a subject. Prefer
-decision_gather for current context, decision_search for fuzzy recall, and
-decision_show_record for exact audit detail.
+decision_list_topics to discover the subject tree, decision_gather for current
+context, decision_search for fuzzy recall, and decision_show_record for exact
+audit detail.
 
 Best practices:
 - Treat subject prefixes as deterministic scope and associations as graph scope.
@@ -19,6 +20,9 @@ Best practices:
 - Add association notes that explain why records are linked.
 - Keep record bodies clear and free-form, but keep subject, kind, status,
   evidence, tags, and related subjects structured.
+- When you find existing decisions, assumptions, or durable ideas buried in
+  markdown, chat transcripts, tickets, or repo docs, process them into the
+  decision tree as records and attach the source document as evidence.
 - If a user says "forget X before time T", interpret it as supersede or withdraw
   from future reasoning while preserving audit history.
 """
@@ -32,6 +36,8 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
 4. Attach evidence links for files, URLs, commands, tickets, logs, or artifacts.
 5. Associate related records across namespaces when namespace alone is too weak.
 6. Supersede older active records when the user says they are obsolete.
+7. If existing markdown contains durable decisions or ideas, import them into
+   the subject tree and link the markdown file as evidence.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.
 """
@@ -48,5 +54,6 @@ TOOL_GUIDANCE = {
     "decision_search": "Full-text search record subject, summary, and body. Use for fuzzy recall before adding duplicate thinking.",
     "decision_show_record": "Show a complete record with tags, evidence, associations, and audit events.",
     "decision_list_records": "List records by subject prefix/status for quick navigation.",
+    "decision_list_topics": "List subject topics in the decision tree with direct and subtree record counts. Use before gather when you need to discover available namespaces.",
     "decision_export_wiki": "Export a subject subtree as static HTML plus JSON indexes. Use for browsable audit packs that can be hosted by nginx.",
 }

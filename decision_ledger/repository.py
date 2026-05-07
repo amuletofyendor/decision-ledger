@@ -255,6 +255,55 @@ class Ledger:
             params,
         ).fetchall()
 
+    def list_topics(
+        self,
+        *,
+        subject: str | None = None,
+        include_obsolete: bool = False,
+        direct_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        all_subjects = self._all_visible_subjects(include_obsolete=include_obsolete)
+        prefixes: set[str] = set()
+        for item in all_subjects:
+            parts = item.split(".")
+            for index in range(1, len(parts) + 1):
+                prefix = ".".join(parts[:index])
+                if subject and not (prefix == subject or prefix.startswith(subject + ".")):
+                    continue
+                if direct_only and subject and prefix != subject and len(prefix.split(".")) != len(subject.split(".")) + 1:
+                    continue
+                if direct_only and not subject and len(prefix.split(".")) != 1:
+                    continue
+                prefixes.add(prefix)
+
+        topics = []
+        for prefix in sorted(prefixes):
+            direct_counts = self._topic_counts(prefix, include_obsolete=include_obsolete, subtree=False)
+            subtree_counts = self._topic_counts(prefix, include_obsolete=include_obsolete, subtree=True)
+            child_count = len(
+                [
+                    candidate
+                    for candidate in prefixes
+                    if candidate.startswith(prefix + ".")
+                    and len(candidate.split(".")) == len(prefix.split(".")) + 1
+                ]
+            )
+            topics.append(
+                {
+                    "subject": prefix,
+                    "parent": ".".join(prefix.split(".")[:-1]) or None,
+                    "depth": len(prefix.split(".")),
+                    "direct_records": direct_counts["total"],
+                    "direct_current": direct_counts["current"],
+                    "direct_obsolete": direct_counts["obsolete"],
+                    "subtree_records": subtree_counts["total"],
+                    "subtree_current": subtree_counts["current"],
+                    "subtree_obsolete": subtree_counts["obsolete"],
+                    "child_topics": child_count,
+                }
+            )
+        return topics
+
     def search(self, query: str, *, limit: int = 20, include_obsolete: bool = False) -> list[sqlite3.Row]:
         status_clause = "" if include_obsolete else self._current_status_clause("r.status")
         params: list[Any] = [query]
@@ -420,3 +469,59 @@ class Ledger:
     def _current_status_clause(column: str) -> str:
         placeholders = ",".join("?" for _ in CURRENT_STATUSES)
         return f"AND {column} IN ({placeholders})"
+
+    def _all_visible_subjects(self, *, include_obsolete: bool) -> set[str]:
+        status_clause = "" if include_obsolete else self._current_status_clause("status").removeprefix("AND ")
+        params: list[Any] = []
+        if not include_obsolete:
+            params.extend(CURRENT_STATUSES)
+        where = f"WHERE {status_clause}" if status_clause else ""
+        primary = {
+            row["subject"]
+            for row in self.conn.execute(
+                f"SELECT DISTINCT subject FROM records {where}",
+                params,
+            )
+        }
+        related = {
+            row["subject"]
+            for row in self.conn.execute(
+                f"""
+                SELECT DISTINCT rs.subject
+                FROM record_subjects rs
+                JOIN records r ON r.id = rs.record_id
+                {where.replace('status', 'r.status')}
+                """,
+                params,
+            )
+        }
+        return primary | related
+
+    def _topic_counts(self, subject: str, *, include_obsolete: bool, subtree: bool) -> dict[str, int]:
+        clauses = ["(subject = ?"]
+        params: list[Any] = [subject]
+        if subtree:
+            clauses[0] += " OR subject LIKE ?"
+            params.append(f"{subject}.%")
+        clauses[0] += ")"
+        if not include_obsolete:
+            placeholders = ",".join("?" for _ in CURRENT_STATUSES)
+            clauses.append(f"status IN ({placeholders})")
+            params.extend(CURRENT_STATUSES)
+        where = " AND ".join(clauses)
+        row = self.conn.execute(
+            f"""
+            SELECT
+              COUNT(*) AS total,
+              SUM(CASE WHEN status IN ('active', 'proposed', 'accepted', 'resolved') THEN 1 ELSE 0 END) AS current,
+              SUM(CASE WHEN status IN ('superseded', 'rejected', 'withdrawn', 'archived') THEN 1 ELSE 0 END) AS obsolete
+            FROM records
+            WHERE {where}
+            """,
+            params,
+        ).fetchone()
+        return {
+            "total": int(row["total"] or 0),
+            "current": int(row["current"] or 0),
+            "obsolete": int(row["obsolete"] or 0),
+        }
