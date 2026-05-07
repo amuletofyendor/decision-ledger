@@ -36,11 +36,11 @@ def resolve_ledger_paths(
     explicit_home = Path(home or env_home).expanduser().resolve() if home or env_home else None
     explicit_db = Path(db_path or env_db).expanduser().resolve() if db_path or env_db else None
 
-    if explicit_home is None:
-        explicit_home = find_ledger_home(cwd_path)
-
     if explicit_home is None and explicit_db is not None:
         explicit_home = explicit_db.parent
+
+    if explicit_home is None:
+        explicit_home = find_ledger_home(cwd_path)
 
     if explicit_home is None:
         explicit_home = DEFAULT_LEDGER_HOME

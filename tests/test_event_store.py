@@ -32,3 +32,18 @@ def test_resolve_ledger_paths_uses_db_parent_as_home_for_explicit_db(tmp_path: P
     assert paths.home == tmp_path.resolve()
     assert paths.db_path == db_path.resolve()
     assert paths.events_dir == tmp_path.resolve() / "events"
+
+
+def test_explicit_db_does_not_use_parent_directory_ledger_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DECISION_LEDGER_HOME", raising=False)
+    monkeypatch.delenv("DECISION_LEDGER_DB", raising=False)
+    workspace = tmp_path / "workspace"
+    nested = workspace / "repo"
+    nested.mkdir(parents=True)
+    (workspace / ".decision-ledger").mkdir()
+    db_path = tmp_path / "isolated" / "ledger.sqlite"
+
+    paths = resolve_ledger_paths(db_path=db_path, cwd=nested)
+
+    assert paths.home == db_path.parent.resolve()
+    assert paths.events_dir == db_path.parent.resolve() / "events"

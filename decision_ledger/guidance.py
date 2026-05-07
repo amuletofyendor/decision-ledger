@@ -32,6 +32,10 @@ Best practices:
 - When you find existing decisions, assumptions, or durable ideas buried in
   markdown, chat transcripts, tickets, or repo docs, process them into the
   decision tree as records and attach the source document as evidence.
+- When the user asks to see, make, generate, or show a wiki, they usually want
+  a browsable result. Export the static wiki, then when the environment allows,
+  serve the output directory with a local HTTP server on a free localhost port
+  and provide that URL.
 - If a user says "forget X before time T", interpret it as supersede or withdraw
   from future reasoning while preserving audit history.
 """
@@ -50,6 +54,8 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
 8. Preserve detail, but split multi-decision material into linked records when
    separate parts need independent subjects, tags, evidence, statuses, or future
    supersession.
+9. If the user asks for a wiki, export the static wiki and normally serve it on
+   a free localhost port so the user can browse it immediately.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.
 """
@@ -68,5 +74,5 @@ TOOL_GUIDANCE = {
     "decision_show_record": "Show a complete record with tags, evidence, associations, and audit events.",
     "decision_list_records": "List records by subject prefix/status for quick navigation.",
     "decision_list_topics": "List subject topics in the decision tree with direct and subtree record counts. Use before gather when you need to discover available namespaces.",
-    "decision_export_wiki": "Export a subject subtree as static HTML plus JSON indexes. Use for browsable audit packs that can be hosted by nginx.",
+    "decision_export_wiki": "Export a subject subtree as static HTML plus JSON indexes. Use for browsable audit packs that can be hosted by nginx. When the user asks to see or generate a wiki, they generally want it served on a free localhost port for immediate browsing after export.",
 }
