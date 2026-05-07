@@ -280,6 +280,8 @@ def test_wiki_export_generates_static_subject_tree(tmp_path: Path, capsys) -> No
 
     index_html = (out_dir / "index.html").read_text(encoding="utf-8")
     assert '<ul class="tree">' in index_html
+    assert '<span class="tree-marker" aria-hidden="true">' in index_html
+    assert "└─" in index_html or "├─" in index_html
     assert "connected-ai.auth.oidc.client-persistence" in index_html
 
 

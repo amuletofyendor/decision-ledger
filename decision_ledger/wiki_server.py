@@ -321,10 +321,16 @@ def render_subject_tree(subjects: list[str]) -> str:
 
 def render_subject_tree_nodes(subjects: list[str], all_subjects: set[str]) -> str:
     items = []
-    for subject in subjects:
+    for index, subject in enumerate(subjects):
         children = direct_child_subjects(subject, all_subjects)
         child_html = render_subject_tree_nodes(children, all_subjects) if children else ""
-        items.append(f"<li><a href=\"{h(subject_url(subject))}\">{h(subject)}</a>{child_html}</li>")
+        marker = "└─" if index == len(subjects) - 1 else "├─"
+        items.append(
+            "<li>"
+            f"<span class=\"tree-row\"><span class=\"tree-marker\" aria-hidden=\"true\">{h(marker)}</span>"
+            f"<a class=\"tree-subject\" href=\"{h(subject_url(subject))}\">{h(subject)}</a></span>"
+            f"{child_html}</li>"
+        )
     return "<ul class=\"tree\">" + "\n".join(items) + "</ul>"
 
 

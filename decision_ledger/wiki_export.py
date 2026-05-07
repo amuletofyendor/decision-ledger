@@ -78,9 +78,22 @@ pre {
 .badge.validation.invalidated { color: var(--contested); border-color: #c98773; }
 ul.clean { list-style: none; padding: 0; margin: 0; }
 ul.clean li { margin: 7px 0; }
-ul.tree { list-style: none; padding-left: 0; margin: 0; }
-ul.tree ul.tree { padding-left: 18px; margin-top: 4px; }
-ul.tree li { margin: 5px 0; }
+ul.tree {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+ul.tree ul.tree { padding-left: 24px; margin-top: 3px; }
+ul.tree li { margin: 4px 0; }
+.tree-row { display: flex; align-items: baseline; gap: 6px; }
+.tree-marker {
+  color: var(--muted);
+  flex: 0 0 24px;
+  text-align: right;
+  user-select: none;
+}
+.tree-subject { font-family: inherit; }
 .body { max-width: 860px; }
 """.strip()
 
@@ -371,11 +384,14 @@ def render_subject_tree(from_file: Path, out: Path, subjects: list[str]) -> str:
 
 def render_subject_tree_nodes(from_file: Path, out: Path, subjects: list[str], all_subjects: set[str]) -> str:
     items = []
-    for subject in subjects:
+    for index, subject in enumerate(subjects):
         children = _direct_child_subjects(subject, all_subjects)
         child_html = render_subject_tree_nodes(from_file, out, children, all_subjects) if children else ""
+        marker = "└─" if index == len(subjects) - 1 else "├─"
         items.append(
-            f"<li><a href=\"{h(_rel(from_file, _subject_file(out, subject)))}\">{h(subject)}</a>"
+            "<li>"
+            f"<span class=\"tree-row\"><span class=\"tree-marker\" aria-hidden=\"true\">{h(marker)}</span>"
+            f"<a class=\"tree-subject\" href=\"{h(_rel(from_file, _subject_file(out, subject)))}\">{h(subject)}</a></span>"
             f"{child_html}</li>"
         )
     return "<ul class=\"tree\">" + "\n".join(items) + "</ul>"
