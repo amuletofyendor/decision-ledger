@@ -41,3 +41,75 @@ superseded or withdrawn", not "delete audit history".
 - [examples/example-record.yaml](examples/example-record.yaml): example record
   with evidence and associations.
 
+## CLI Quick Start
+
+Run the CLI from this repo:
+
+```bash
+./bin/decisions init
+```
+
+By default this creates or migrates:
+
+```text
+~/.decision-ledger/ledger.sqlite
+```
+
+Use `--db` or `DECISION_LEDGER_DB` for a different ledger:
+
+```bash
+./bin/decisions --db /tmp/ledger.sqlite init
+```
+
+Add a thought:
+
+```bash
+./bin/decisions add connected-ai.auth.oidc.client-persistence \
+  --kind thought \
+  --summary "MCP dynamic clients may be clobbered by identity restarts" \
+  --body "Working thought: dynamic clients may be overwritten by another identity deployment sharing the same backing DB." \
+  --tag mcp \
+  --tag oidc
+```
+
+Attach evidence:
+
+```bash
+./bin/decisions evidence add rec_... \
+  --type file \
+  --uri /home/neil/Dev/fc.identity \
+  --note "Identity service source and seeding behavior"
+```
+
+Associate records:
+
+```bash
+./bin/decisions associate rec_... rec_... \
+  --relation depends_on \
+  --note "This auth thought depends on the shared DB ownership finding"
+```
+
+Gather current context for a namespace:
+
+```bash
+./bin/decisions gather connected-ai.auth
+```
+
+Supersede a single record:
+
+```bash
+./bin/decisions supersede rec_old rec_new \
+  --note "New decision replaces the earlier proposal"
+```
+
+Bulk supersede records under a namespace before a timestamp:
+
+```bash
+./bin/decisions supersede connected-ai.auth.oidc \
+  --before "2026-05-07 11:00" \
+  --replacement rec_new \
+  --note "Earlier records were superseded by the 11am design revision"
+```
+
+Commands that support `--json` produce stable machine-readable output for
+future agent integration.

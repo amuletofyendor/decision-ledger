@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+
+from decision_ledger.cli import main
+
+
+def run_cli(db_path: Path, *args: str) -> int:
+    return main(["--db", str(db_path), *args])
+
+
+def test_add_show_and_search(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    assert run_cli(
+        db_path,
+        "add",
+        "connected-ai.auth.oidc.client-persistence",
+        "--kind",
+        "decision",
+        "--status",
+        "accepted",
+        "--summary",
+        "Persist dynamic clients",
+        "--body",
+        "OpenIddict dynamic clients must survive identity restarts.",
+        "--tag",
+        "oidc",
+        "--json",
+    ) == 0
+    record_id = json.loads(capsys.readouterr().out)["id"]
+
+    assert run_cli(db_path, "show", record_id, "--json") == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["subject"] == "connected-ai.auth.oidc.client-persistence"
+    assert record["tags"] == ["oidc"]
+
+    assert run_cli(db_path, "search", "OpenIddict", "--json") == 0
+    results = json.loads(capsys.readouterr().out)
+    assert [row["id"] for row in results] == [record_id]
+
+
+def test_evidence_association_and_gather(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    run_cli(db_path, "add", "connected-ai.auth.oidc", "--body", "First thought", "--summary", "First", "--json")
+    first_id = json.loads(capsys.readouterr().out)["id"]
+    run_cli(db_path, "add", "connected-ai.environments.dev-aks.identity", "--body", "Environment fact", "--summary", "Env", "--json")
+    second_id = json.loads(capsys.readouterr().out)["id"]
+
+    assert run_cli(
+        db_path,
+        "evidence",
+        "add",
+        first_id,
+        "--type",
+        "file",
+        "--uri",
+        "/tmp/source.cs",
+        "--line",
+        "42",
+        "--json",
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["id"].startswith("evd_")
+
+    assert run_cli(
+        db_path,
+        "associate",
+        first_id,
+        second_id,
+        "--relation",
+        "depends_on",
+        "--note",
+        "Auth depends on shared DB ownership",
+        "--json",
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["id"].startswith("asc_")
+
+    assert run_cli(db_path, "gather", "connected-ai.auth", "--json") == 0
+    gathered = json.loads(capsys.readouterr().out)
+    assert [row["id"] for row in gathered["current"]] == [first_id]
+    assert [row["id"] for row in gathered["associated"]] == [second_id]
+    assert gathered["evidence"][0]["uri"] == "/tmp/source.cs"
+
+
+def test_supersede_record(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    run_cli(db_path, "add", "connected-ai.auth.oidc", "--body", "Old thought", "--summary", "Old", "--json")
+    old_id = json.loads(capsys.readouterr().out)["id"]
+    run_cli(db_path, "add", "connected-ai.auth.oidc", "--body", "New thought", "--summary", "New", "--json")
+    new_id = json.loads(capsys.readouterr().out)["id"]
+
+    assert run_cli(db_path, "supersede", old_id, new_id, "--note", "New replaces old", "--json") == 0
+    assert json.loads(capsys.readouterr().out)["superseded"] == [old_id]
+
+    assert run_cli(db_path, "show", old_id, "--json") == 0
+    old_record = json.loads(capsys.readouterr().out)
+    assert old_record["status"] == "superseded"
+
+    conn = sqlite3.connect(db_path)
+    relation = conn.execute(
+        "SELECT relation FROM record_associations WHERE from_record_id = ? AND to_record_id = ?",
+        (new_id, old_id),
+    ).fetchone()[0]
+    assert relation == "supersedes"
+
+
+def test_bulk_supersede_subject_before(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    run_cli(db_path, "add", "connected-ai.auth.oidc", "--body", "Old A", "--json")
+    old_a = json.loads(capsys.readouterr().out)["id"]
+    run_cli(db_path, "add", "connected-ai.auth.oidc.client-persistence", "--body", "Old B", "--json")
+    old_b = json.loads(capsys.readouterr().out)["id"]
+    run_cli(db_path, "add", "connected-ai.auth.oidc", "--body", "Replacement", "--json")
+    replacement = json.loads(capsys.readouterr().out)["id"]
+
+    assert run_cli(
+        db_path,
+        "supersede",
+        "connected-ai.auth.oidc",
+        "--before",
+        "2999-01-01 00:00",
+        "--replacement",
+        replacement,
+        "--json",
+    ) == 0
+    superseded = json.loads(capsys.readouterr().out)["superseded"]
+    assert superseded == [old_a, old_b]
+

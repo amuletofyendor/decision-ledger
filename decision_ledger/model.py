@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+import json
+import secrets
+from datetime import datetime
+from typing import Any
+
+
+CURRENT_STATUSES = ("active", "proposed", "accepted", "resolved")
+OBSOLETE_STATUSES = ("superseded", "rejected", "withdrawn", "archived")
+SYMMETRIC_RELATIONS = {"associated_with", "duplicates"}
+
+
+def now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def new_id(prefix: str) -> str:
+    stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    return f"{prefix}_{stamp}_{secrets.token_hex(3)}"
+
+
+def parse_datetime(value: str) -> str:
+    normalized = value.strip()
+    if " " in normalized and "T" not in normalized:
+        normalized = normalized.replace(" ", "T", 1)
+    try:
+        return datetime.fromisoformat(normalized).astimezone().isoformat(timespec="seconds")
+    except ValueError:
+        return value
+
+
+def rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
+    return [dict(row) for row in rows]
+
+
+def json_dumps(value: Any) -> str:
+    return json.dumps(value, indent=2, sort_keys=True)
+
