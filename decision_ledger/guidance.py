@@ -48,5 +48,5 @@ TOOL_GUIDANCE = {
     "decision_search": "Full-text search record subject, summary, and body. Use for fuzzy recall before adding duplicate thinking.",
     "decision_show_record": "Show a complete record with tags, evidence, associations, and audit events.",
     "decision_list_records": "List records by subject prefix/status for quick navigation.",
+    "decision_export_wiki": "Export a subject subtree as static HTML plus JSON indexes. Use for browsable audit packs that can be hosted by nginx.",
 }
-

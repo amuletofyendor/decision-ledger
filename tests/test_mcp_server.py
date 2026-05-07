@@ -48,6 +48,7 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     tool_names = {tool["name"] for tool in tools}
     assert "decision_add_record" in tool_names
     assert "decision_supersede_subject_before" in tool_names
+    assert "decision_export_wiki" in tool_names
     assert all("inputSchema" in tool for tool in tools)
 
     prompts = request(server, "prompts/list")["result"]["prompts"]
@@ -146,3 +147,31 @@ def test_batch_response_is_single_json_rpc_array(tmp_path: Path) -> None:
     assert isinstance(responses[0], list)
     assert [response["id"] for response in responses[0]] == [1, 2]
 
+
+def test_mcp_export_wiki_tool(tmp_path: Path) -> None:
+    server = MCPServer(tmp_path / "ledger.sqlite")
+
+    record_id = tool_call(
+        server,
+        "decision_add_record",
+        {
+            "subject": "connected-ai.retrieval.wiki.page-contract",
+            "summary": "Page contract",
+            "body": "Wiki pages should carry enough context for retrieval.",
+            "visibility": "internal",
+        },
+    )["id"]
+
+    result = tool_call(
+        server,
+        "decision_export_wiki",
+        {
+            "subject": "connected-ai.retrieval",
+            "output_dir": str(tmp_path / "wiki"),
+            "profile": "internal",
+        },
+    )
+
+    assert result["records"] == 1
+    assert "assets/search-index.json" in result["files"]
+    assert (tmp_path / "wiki" / "records" / record_id / "index.html").exists()

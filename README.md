@@ -114,6 +114,35 @@ Bulk supersede records under a namespace before a timestamp:
 Commands that support `--json` produce stable machine-readable output for
 future agent integration.
 
+Export a subject subtree as a static wiki:
+
+```bash
+./bin/decisions wiki connected-ai.auth \
+  --out ./public \
+  --all \
+  --profile internal
+```
+
+The static export writes:
+
+```text
+public/
+  index.html
+  subjects/.../index.html
+  records/.../index.html
+  assets/styles.css
+  assets/search-index.json
+  assets/graph.json
+```
+
+Export profiles are deliberately conservative:
+
+- `internal`: includes private, internal, shareable, and public records/evidence
+- `shareable`: includes only shareable and public records/evidence
+- `public`: includes only public records/evidence
+
+Use `--clean` to remove the output directory before regenerating it.
+
 ## MCP Server
 
 The repo also includes a dependency-free stdio MCP server:
@@ -148,6 +177,7 @@ The MCP server exposes tools for:
 - `decision_search`
 - `decision_show_record`
 - `decision_list_records`
+- `decision_export_wiki`
 
 It also exposes prompt templates:
 
@@ -162,6 +192,8 @@ The MCP surface deliberately bakes in usage guidance:
 - supersede or withdraw records instead of deleting them for normal forgetting
 - attach evidence for audit-worthy claims
 - associate records across namespaces when subject prefix alone is insufficient
+- export namespace subtrees as static HTML audit packs when a browsable handover
+  is useful
 
 The implementation follows the MCP stdio shape: newline-delimited JSON-RPC on
 stdin/stdout, no stdout logging, `initialize`, `tools/list`, `tools/call`,
