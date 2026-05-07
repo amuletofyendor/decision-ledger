@@ -3,21 +3,22 @@
 Decision Ledger is a local-first record of thoughts, decisions, assumptions,
 questions, evidence, and associations. It is intended to give humans and LLM
 agents a shared, auditable memory that is more precise than loose markdown, but
-still easy to browse and export.
+still easy to browse.
 
 The core idea is:
 
 - Namespace JSONL event files are the canonical store.
-- SQLite is a generated projection for fast query, search, and export.
+- SQLite is a generated projection for fast query, search, and wiki serving.
 - Records are append-friendly and audit-oriented.
 - Dot-separated subjects provide a stable namespace tree.
 - Evidence links make claims inspectable.
 - Validation state distinguishes checked claims from unvalidated ideas.
 - Associations form a graph across records when namespace alone is not enough.
-- Static HTML exports make any namespace subtree browsable in nginx.
-- Markdown and static HTML remain readable projections, not the source of truth.
+- `decision-wiki-server` makes the live namespace tree browsable on demand.
+- Markdown remains a readable projection, not the source of truth.
 
-The detailed plan is in [docs/decision-ledger-plan.md](docs/decision-ledger-plan.md).
+Durable architecture decisions for this project live in the ledger itself under
+the `decision-ledger` subject tree. Browse them with `decision-wiki-server`.
 
 ## Target Queries
 
@@ -29,7 +30,7 @@ Gather all previous thoughts about connected-ai.retrieval.wiki.
 Show current accepted decisions under connected-ai.auth.
 Show superseded assumptions that influenced this decision.
 Show everything associated with this record, even outside its namespace.
-Export connected-ai.auth as a static wiki for review.
+Serve connected-ai.auth as a live wiki for review.
 ```
 
 In this context, "forget" means "exclude from future reasoning by marking as
@@ -37,8 +38,6 @@ superseded or withdrawn", not "delete audit history".
 
 ## Repository Contents
 
-- [docs/decision-ledger-plan.md](docs/decision-ledger-plan.md): full architecture
-  and implementation plan.
 - [schema/001_initial.sql](schema/001_initial.sql): first-pass SQLite schema.
 - [examples/example-record.yaml](examples/example-record.yaml): example record
   with evidence and associations.
@@ -174,37 +173,7 @@ Bulk supersede records under a namespace before a timestamp:
 Commands that support `--json` produce stable machine-readable output for
 future agent integration.
 
-Export a subject subtree as a static wiki:
-
-```bash
-./bin/decisions wiki connected-ai.auth \
-  --out ./public \
-  --all \
-  --profile internal
-```
-
-The static export writes:
-
-```text
-public/
-  index.html
-  subjects/.../index.html
-  records/.../index.html
-  assets/styles.css
-  assets/search-index.json
-  assets/graph.json
-```
-
-Export profiles are deliberately conservative:
-
-- `internal`: includes private, internal, shareable, and public records/evidence
-- `shareable`: includes only shareable and public records/evidence
-- `public`: includes only public records/evidence
-
-Use `--clean` to remove the output directory before regenerating it.
-
-For local browsing, prefer the live wiki server. It serves each page on demand
-from the current SQLite projection instead of prebuilding a static tree:
+Serve a subject subtree as a live wiki:
 
 ```bash
 ./bin/decision-wiki-server decision-ledger \
@@ -212,8 +181,8 @@ from the current SQLite projection instead of prebuilding a static tree:
   --port 8766
 ```
 
-Use the static export when you need a portable audit pack to host elsewhere,
-for example on nginx without the ledger process running.
+The wiki server serves each page on demand from the current SQLite projection
+instead of prebuilding a static tree. This is the only supported wiki path.
 
 ## MCP Server
 
@@ -252,7 +221,6 @@ The MCP server exposes tools for:
 - `decision_show_record`
 - `decision_list_records`
 - `decision_list_topics`
-- `decision_export_wiki`
 
 It also exposes prompt templates:
 
@@ -277,8 +245,7 @@ The MCP surface deliberately bakes in usage guidance:
   evidence, statuses, or supersession paths
 - process durable decisions and ideas buried in markdown, tickets, transcripts,
   or repo docs into the subject tree, with the source document as evidence
-- export namespace subtrees as static HTML audit packs when a browsable handover
-  is useful
+- start `decision-wiki-server` for browsable wiki views
 
 The implementation follows the MCP stdio shape: newline-delimited JSON-RPC on
 stdin/stdout, no stdout logging, `initialize`, `tools/list`, `tools/call`,

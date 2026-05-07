@@ -13,16 +13,18 @@ from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, now_iso
 from .repository import Ledger
-from .wiki_export import (
+from .wiki_render import (
     PROFILE_VISIBILITY,
     STYLESHEET_CSS,
-    _records_for_export,
-    _subject_prefixes,
+    all_subject_prefixes,
     badge,
+    direct_child_subjects,
     h,
     page,
+    records_for_wiki,
     render_evidence,
     render_events,
+    subject_prefixes,
     subject_tree_roots,
     stat_card,
     validation_badge,
@@ -90,7 +92,7 @@ def create_server(
     port: int,
 ) -> ThreadingHTTPServer:
     if profile not in PROFILE_VISIBILITY:
-        raise ValueError(f"unknown export profile: {profile}")
+        raise ValueError(f"unknown wiki profile: {profile}")
 
     normalized_subject = subject.strip(".")
 
@@ -146,7 +148,7 @@ def render_request(
             include_obsolete=include_obsolete,
             profile=profile,
         )
-        record_ids = {record["id"] for record in records}
+        visible_record_ids = {record["id"] for record in records}
 
         if route in {"/", "/index.html"}:
             html = render_index(root_subject, records, profile)
@@ -156,7 +158,7 @@ def render_request(
             return json_bytes(search_index(records)), "application/json; charset=utf-8", HTTPStatus.OK
 
         if route == "/assets/graph.json":
-            return json_bytes(graph_index(records, record_ids)), "application/json; charset=utf-8", HTTPStatus.OK
+            return json_bytes(graph_index(records, visible_record_ids)), "application/json; charset=utf-8", HTTPStatus.OK
 
         if route.startswith("/subjects/"):
             subject = subject_from_route(route)
@@ -167,10 +169,10 @@ def render_request(
 
         if route.startswith("/records/"):
             record_id = record_id_from_route(route)
-            if record_id not in record_ids:
+            if record_id not in visible_record_ids:
                 return not_found("Record not found")
             record = next(record for record in records if record["id"] == record_id)
-            html = render_record_page(record, record_ids)
+            html = render_record_page(record, visible_record_ids)
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
     return not_found("Wiki page not found")
@@ -198,30 +200,23 @@ def records_for_live_view(
     profile: str,
 ) -> list[dict[str, Any]]:
     if root_subject:
-        return _records_for_export(
+        return records_for_wiki(
             ledger,
             subject=root_subject,
             include_obsolete=include_obsolete,
-            allowed_visibility=PROFILE_VISIBILITY[profile],
+            profile=profile,
         )
-
-    rows = ledger.list_records(include_obsolete=include_obsolete, limit=10_000)
-    records: list[dict[str, Any]] = []
-    for row in rows:
-        record = ledger.get_record(row["id"])
-        if record and record["export_visibility"] in PROFILE_VISIBILITY[profile]:
-            record["evidence"] = [
-                item
-                for item in record["evidence"]
-                if item["export_visibility"] in PROFILE_VISIBILITY[profile]
-            ]
-            records.append(record)
-    return sorted(records, key=lambda item: (item["subject"], item["created_at"], item["id"]))
+    return records_for_wiki(
+        ledger,
+        subject=None,
+        include_obsolete=include_obsolete,
+        profile=profile,
+    )
 
 
 def render_index(root_subject: str, records: list[dict[str, Any]], profile: str) -> str:
     subjects = [record["subject"] for record in records]
-    prefixes = sorted(_subject_prefixes(root_subject, subjects)) if root_subject else sorted(_all_prefixes(subjects))
+    prefixes = sorted(subject_prefixes(root_subject, subjects)) if root_subject else sorted(all_subject_prefixes(subjects))
     current = len([record for record in records if record["status"] in CURRENT_STATUSES])
     obsolete = len([record for record in records if record["status"] in OBSOLETE_STATUSES])
     validated = len([record for record in records if record["validation_state"] == "validated"])
@@ -247,7 +242,7 @@ def render_index(root_subject: str, records: list[dict[str, Any]], profile: str)
 
 
 def render_subject_page(root_subject: str, subject: str, records: list[dict[str, Any]], profile: str) -> str:
-    prefixes = _subject_prefixes(root_subject, [record["subject"] for record in records]) if root_subject else _all_prefixes([record["subject"] for record in records])
+    prefixes = subject_prefixes(root_subject, [record["subject"] for record in records]) if root_subject else all_subject_prefixes([record["subject"] for record in records])
     if subject not in prefixes:
         return page("Subject Not Found", [f"<p>No records under <code>{h(subject)}</code>.</p>"], "/assets/styles.css")
 
@@ -269,7 +264,7 @@ def render_subject_page(root_subject: str, subject: str, records: list[dict[str,
     return page(subject, body, "/assets/styles.css")
 
 
-def render_record_page(record: dict[str, Any], exported_record_ids: set[str]) -> str:
+def render_record_page(record: dict[str, Any], visible_record_ids: set[str]) -> str:
     body = [
         f"<p class=\"breadcrumb\"><a href=\"/\">wiki</a> / "
         f"<a href=\"{h(subject_url(record['subject']))}\">{h(record['subject'])}</a></p>",
@@ -299,8 +294,8 @@ def render_record_page(record: dict[str, Any], exported_record_ids: set[str]) ->
             body.append(f"<li>{h(item['relation'])}: {h(item['subject'])}</li>")
         body.append("</ul>")
     body.extend(["<h2>Evidence</h2>", render_evidence(record["evidence"])])
-    body.extend(["<h2>Associations Out</h2>", render_associations(record["associations_out"], exported_record_ids, "->")])
-    body.extend(["<h2>Associations In</h2>", render_associations(record["associations_in"], exported_record_ids, "<-")])
+    body.extend(["<h2>Associations Out</h2>", render_associations(record["associations_out"], visible_record_ids, "->")])
+    body.extend(["<h2>Associations In</h2>", render_associations(record["associations_in"], visible_record_ids, "<-")])
     body.extend(["<h2>Events</h2>", render_events(record["events"])])
     return page(record.get("summary") or record["id"], body, "/assets/styles.css")
 
@@ -351,13 +346,13 @@ def render_record_list(records: list[dict[str, Any]]) -> str:
     return "\n".join(items)
 
 
-def render_associations(items: list[dict[str, Any]], exported_record_ids: set[str], arrow: str) -> str:
+def render_associations(items: list[dict[str, Any]], visible_record_ids: set[str], arrow: str) -> str:
     if not items:
         return "<p class=\"empty\">none</p>"
     body = ["<ul class=\"clean\">"]
     for item in items:
         record_id = item["record_id"]
-        if record_id in exported_record_ids:
+        if record_id in visible_record_ids:
             target = f"<a href=\"{h(record_url(record_id))}\">{h(record_id)}</a>"
         else:
             target = f"<code>{h(record_id)}</code>"
@@ -383,7 +378,7 @@ def search_index(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def graph_index(records: list[dict[str, Any]], exported_record_ids: set[str]) -> dict[str, Any]:
+def graph_index(records: list[dict[str, Any]], visible_record_ids: set[str]) -> dict[str, Any]:
     nodes = [
         {
             "id": record["id"],
@@ -401,7 +396,7 @@ def graph_index(records: list[dict[str, Any]], exported_record_ids: set[str]) ->
         for item in record["associations_out"]:
             target = item["record_id"]
             key = (record["id"], target, item["relation"])
-            if target in exported_record_ids and key not in seen_edges:
+            if target in visible_record_ids and key not in seen_edges:
                 seen_edges.add(key)
                 edges.append(
                     {
@@ -440,24 +435,6 @@ def subject_from_route(route: str) -> str | None:
 
 def record_id_from_route(route: str) -> str:
     return route.removeprefix("/records/").removesuffix("/index.html").strip("/")
-
-
-def _all_prefixes(subjects: list[str]) -> set[str]:
-    prefixes: set[str] = set()
-    for subject in subjects:
-        parts = subject.split(".")
-        for index in range(1, len(parts) + 1):
-            prefixes.add(".".join(parts[:index]))
-    return prefixes
-
-
-def direct_child_subjects(subject: str, prefixes: set[str]) -> list[str]:
-    children = []
-    base_len = len(subject.split("."))
-    for candidate in prefixes:
-        if candidate.startswith(subject + ".") and len(candidate.split(".")) == base_len + 1:
-            children.append(candidate)
-    return sorted(children)
 
 
 def breadcrumb(subject: str) -> str:

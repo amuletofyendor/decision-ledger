@@ -9,7 +9,6 @@ from typing import Any
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .model import VALIDATION_STATES, json_dumps
-from .wiki_export import export_static_wiki
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,15 +151,6 @@ def build_parser() -> argparse.ArgumentParser:
     supersede.add_argument("--created-by")
     supersede.add_argument("--json", action="store_true")
     supersede.set_defaults(func=cmd_supersede)
-
-    wiki = subparsers.add_parser("wiki", help="Export a subject subtree as a static HTML wiki")
-    wiki.add_argument("subject")
-    wiki.add_argument("--out", required=True, help="Output directory for generated static files")
-    wiki.add_argument("--all", action="store_true", help="Include obsolete records")
-    wiki.add_argument("--profile", default="internal", choices=["internal", "shareable", "public"])
-    wiki.add_argument("--clean", action="store_true", help="Remove the output directory before exporting")
-    wiki.add_argument("--json", action="store_true")
-    wiki.set_defaults(func=cmd_wiki)
 
     return parser
 
@@ -318,26 +308,6 @@ def cmd_supersede(args: argparse.Namespace, ledger: EventedLedger, _paths: Ledge
             created_by=args.created_by,
         )
         output({"superseded": [args.target]}, args.json, fallback=f"superseded {args.target}")
-    return 0
-
-
-def cmd_wiki(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
-    result = export_static_wiki(
-        ledger,
-        subject=args.subject,
-        output_dir=args.out,
-        include_obsolete=args.all,
-        profile=args.profile,
-        clean=args.clean,
-    ).as_dict()
-    output(
-        result,
-        args.json,
-        fallback=(
-            f"exported {result['records']} records and {result['subject_pages']} subject pages "
-            f"to {result['output_dir']}"
-        ),
-    )
     return 0
 
 

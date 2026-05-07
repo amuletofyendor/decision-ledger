@@ -12,7 +12,6 @@ from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .guidance import CAPTURE_PROMPT, SERVER_INSTRUCTIONS, TOOL_GUIDANCE
 from .model import VALIDATION_STATES, json_dumps
-from .wiki_export import export_static_wiki
 
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -386,29 +385,6 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 include_obsolete=bool(args.get("include_obsolete", False)),
                 direct_only=bool(args.get("direct_only", False)),
             ),
-        ),
-        "decision_export_wiki": (
-            tool_definition(
-                "decision_export_wiki",
-                "Export Static Decision Wiki",
-                TOOL_GUIDANCE["decision_export_wiki"],
-                {
-                    "subject": string_schema("Subject prefix to export."),
-                    "output_dir": string_schema("Directory to write the static wiki into."),
-                    "include_obsolete": {"type": "boolean", "description": "Include superseded/rejected/withdrawn/archived records."},
-                    "profile": enum_schema(["internal", "shareable", "public"], "Visibility profile. Internal exports all records; shareable/public are filtered."),
-                    "clean": {"type": "boolean", "description": "Remove the output directory before exporting."},
-                },
-                required=["subject", "output_dir"],
-            ),
-            lambda args: export_static_wiki(
-                ledger,
-                subject=require_str(args, "subject"),
-                output_dir=require_str(args, "output_dir"),
-                include_obsolete=bool(args.get("include_obsolete", False)),
-                profile=args.get("profile", "internal"),
-                clean=bool(args.get("clean", False)),
-            ).as_dict(),
         ),
     }
 

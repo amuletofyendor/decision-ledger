@@ -51,7 +51,7 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "decision_validate_record" in tool_names
     assert "decision_supersede_subject_before" in tool_names
     assert "decision_list_topics" in tool_names
-    assert "decision_export_wiki" in tool_names
+    assert "decision_export_wiki" not in tool_names
     assert all("inputSchema" in tool for tool in tools)
 
     prompts = request(server, "prompts/list")["result"]["prompts"]
@@ -180,37 +180,6 @@ def test_batch_response_is_single_json_rpc_array(tmp_path: Path) -> None:
     assert len(responses) == 1
     assert isinstance(responses[0], list)
     assert [response["id"] for response in responses[0]] == [1, 2]
-
-
-def test_mcp_export_wiki_tool(tmp_path: Path) -> None:
-    server = MCPServer(tmp_path / "ledger.sqlite")
-
-    record_id = tool_call(
-        server,
-        "decision_add_record",
-        {
-            "subject": "connected-ai.retrieval.wiki.page-contract",
-            "summary": "Page contract",
-            "body": "Wiki pages should carry enough context for retrieval.",
-            "visibility": "internal",
-        },
-    )["id"]
-
-    result = tool_call(
-        server,
-        "decision_export_wiki",
-        {
-            "subject": "connected-ai.retrieval",
-            "output_dir": str(tmp_path / "wiki"),
-            "profile": "internal",
-        },
-    )
-
-    assert result["records"] == 1
-    assert "assets/search-index.json" in result["files"]
-    assert (tmp_path / "wiki" / "records" / record_id / "index.html").exists()
-    search_index = json.loads((tmp_path / "wiki" / "assets" / "search-index.json").read_text(encoding="utf-8"))
-    assert search_index[0]["validation_state"] == "unvalidated"
 
 
 def test_mcp_list_topics_tool(tmp_path: Path) -> None:
