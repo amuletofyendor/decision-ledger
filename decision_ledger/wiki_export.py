@@ -78,6 +78,9 @@ pre {
 .badge.validation.invalidated { color: var(--contested); border-color: #c98773; }
 ul.clean { list-style: none; padding: 0; margin: 0; }
 ul.clean li { margin: 7px 0; }
+ul.tree { list-style: none; padding-left: 0; margin: 0; }
+ul.tree ul.tree { padding-left: 18px; margin-top: 4px; }
+ul.tree li { margin: 5px 0; }
 .body { max-width: 860px; }
 """.strip()
 
@@ -221,7 +224,7 @@ def _write_index(out: Path, subject: str, records: list[dict[str, Any]], prefixe
         "<li><a href=\"assets/graph.json\">Graph JSON</a></li>",
         "</ul>",
         "<h2>Subject Pages</h2>",
-        render_subject_list(out / "index.html", out, sorted(prefixes)),
+        render_subject_tree(out / "index.html", out, sorted(prefixes)),
     ]
     path = out / "index.html"
     path.write_text(page("Decision Ledger Wiki", body, "assets/styles.css"), encoding="utf-8")
@@ -249,7 +252,7 @@ def _write_subject_page(
         f"<p class=\"meta\">Root: {h(root_subject)}. Profile: {h(profile)}. Records in subtree: {len(subtree)}.</p>",
     ]
     if direct_children:
-        body.extend(["<h2>Child Subjects</h2>", render_subject_list(path, out, direct_children)])
+        body.extend(["<h2>Child Subjects</h2>", render_subject_tree(path, out, direct_children)])
     if exact:
         body.extend(["<h2>Records Exactly Here</h2>", render_record_list(path, out, exact)])
     body.extend(["<h2>Current Records In Subtree</h2>", render_record_list(path, out, current)])
@@ -357,6 +360,25 @@ def render_subject_list(from_file: Path, out: Path, subjects: list[str]) -> str:
         return "<p class=\"empty\">none</p>"
     items = [f"<li><a href=\"{h(_rel(from_file, _subject_file(out, subject)))}\">{h(subject)}</a></li>" for subject in subjects]
     return "<ul class=\"clean\">" + "\n".join(items) + "</ul>"
+
+
+def render_subject_tree(from_file: Path, out: Path, subjects: list[str]) -> str:
+    if not subjects:
+        return "<p class=\"empty\">none</p>"
+    roots = subject_tree_roots(subjects)
+    return render_subject_tree_nodes(from_file, out, roots, set(subjects))
+
+
+def render_subject_tree_nodes(from_file: Path, out: Path, subjects: list[str], all_subjects: set[str]) -> str:
+    items = []
+    for subject in subjects:
+        children = _direct_child_subjects(subject, all_subjects)
+        child_html = render_subject_tree_nodes(from_file, out, children, all_subjects) if children else ""
+        items.append(
+            f"<li><a href=\"{h(_rel(from_file, _subject_file(out, subject)))}\">{h(subject)}</a>"
+            f"{child_html}</li>"
+        )
+    return "<ul class=\"tree\">" + "\n".join(items) + "</ul>"
 
 
 def render_record_list(from_file: Path, out: Path, records: list[dict[str, Any]]) -> str:
@@ -494,6 +516,17 @@ def _direct_child_subjects(prefix: str, prefixes: set[str]) -> list[str]:
         if candidate.startswith(prefix + ".") and len(candidate.split(".")) == base_len + 1:
             children.append(candidate)
     return sorted(children)
+
+
+def subject_tree_roots(subjects: list[str]) -> list[str]:
+    subject_set = set(subjects)
+    roots = []
+    for subject in sorted(subject_set):
+        parts = subject.split(".")
+        has_parent = any(".".join(parts[:index]) in subject_set for index in range(1, len(parts)))
+        if not has_parent:
+            roots.append(subject)
+    return roots
 
 
 def _validate_clean_target(path: Path) -> None:

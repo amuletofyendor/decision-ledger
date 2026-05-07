@@ -23,6 +23,7 @@ from .wiki_export import (
     page,
     render_evidence,
     render_events,
+    subject_tree_roots,
     stat_card,
     validation_badge,
     validation_meta,
@@ -240,7 +241,7 @@ def render_index(root_subject: str, records: list[dict[str, Any]], profile: str)
         "<li><a href=\"/assets/graph.json\">Graph JSON</a></li>",
         "</ul>",
         "<h2>Subject Pages</h2>",
-        render_subject_list(prefixes),
+        render_subject_tree(prefixes),
     ]
     return page(title, body, "/assets/styles.css")
 
@@ -260,7 +261,7 @@ def render_subject_page(root_subject: str, subject: str, records: list[dict[str,
         f"<p class=\"meta\">Root: {h(root_subject or '(all)')}. Profile: {h(profile)}. Records in subtree: {len(subtree)}.</p>",
     ]
     if direct_children:
-        body.extend(["<h2>Child Subjects</h2>", render_subject_list(direct_children)])
+        body.extend(["<h2>Child Subjects</h2>", render_subject_tree(direct_children)])
     if exact:
         body.extend(["<h2>Records Exactly Here</h2>", render_record_list(exact)])
     body.extend(["<h2>Current Records In Subtree</h2>", render_record_list(current)])
@@ -309,6 +310,22 @@ def render_subject_list(subjects: list[str]) -> str:
         return "<p class=\"empty\">none</p>"
     items = [f"<li><a href=\"{h(subject_url(subject))}\">{h(subject)}</a></li>" for subject in subjects]
     return "<ul class=\"clean\">" + "\n".join(items) + "</ul>"
+
+
+def render_subject_tree(subjects: list[str]) -> str:
+    if not subjects:
+        return "<p class=\"empty\">none</p>"
+    subject_set = set(subjects)
+    return render_subject_tree_nodes(subject_tree_roots(subjects), subject_set)
+
+
+def render_subject_tree_nodes(subjects: list[str], all_subjects: set[str]) -> str:
+    items = []
+    for subject in subjects:
+        children = direct_child_subjects(subject, all_subjects)
+        child_html = render_subject_tree_nodes(children, all_subjects) if children else ""
+        items.append(f"<li><a href=\"{h(subject_url(subject))}\">{h(subject)}</a>{child_html}</li>")
+    return "<ul class=\"tree\">" + "\n".join(items) + "</ul>"
 
 
 def render_record_list(records: list[dict[str, Any]]) -> str:

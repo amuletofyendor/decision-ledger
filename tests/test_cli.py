@@ -278,6 +278,10 @@ def test_wiki_export_generates_static_subject_tree(tmp_path: Path, capsys) -> No
     assert "https://example.test/evidence" in record_html
     assert "../../assets/styles.css" in record_html
 
+    index_html = (out_dir / "index.html").read_text(encoding="utf-8")
+    assert '<ul class="tree">' in index_html
+    assert "connected-ai.auth.oidc.client-persistence" in index_html
+
 
 def test_wiki_export_profile_filters_private_records(tmp_path: Path, capsys) -> None:
     db_path = tmp_path / "ledger.sqlite"

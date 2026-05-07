@@ -54,6 +54,7 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
         index_html = fetch(base_url, "/")
         assert "decision-ledger.live.initial" in index_html
         assert "Live view" in index_html
+        assert '<ul class="tree">' in index_html
 
         record_html = fetch(base_url, f"/records/{first_record_id}/index.html")
         assert "This record exists before the server starts." in record_html
