@@ -5,6 +5,127 @@ assumptions, questions, evidence, and associations. It is intended to give
 humans and LLM agents a shared, auditable memory that is more precise than
 loose markdown, but still easy to browse.
 
+## LLM-Oriented Setup
+
+Decision Ledger is meant to be installed and used by an LLM agent on behalf of
+the user. The user should not need to learn the whole CLI or MCP surface before
+getting value from it. A good first request is:
+
+```text
+Set up Decision Ledger for this workspace. Install it from this repo, create or
+reuse a .decision-ledger folder, initialize the ledger, add it to the MCP config
+for the LLM clients you can safely edit, test that the MCP server starts, and
+serve the live wiki on a free localhost port so I can inspect it.
+```
+
+For a repo-local ledger that should be preserved with the project, ask:
+
+```text
+Set up a project-local Decision Ledger in ./.decision-ledger. Treat JSONL event
+files as canonical and git-friendly, keep ledger.sqlite generated, update
+.gitignore if needed, and record the setup decision in the ledger.
+```
+
+For a personal top-level ledger shared by several projects, ask:
+
+```text
+Set up a Decision Ledger under ~/workspaces/.decision-ledger and configure my LLM
+clients to use it by default when working anywhere under ~/workspaces.
+```
+
+The LLM should carry out these steps:
+
+1. Create a Python environment and install the repo in editable mode.
+2. Choose the ledger home: usually `./.decision-ledger` for a project ledger or
+   a higher-level folder such as `~/workspaces/.decision-ledger` for a shared workspace
+   ledger.
+3. Run `decisions init` against that ledger home.
+4. Ensure `events/**/*.jsonl` can be committed and `ledger.sqlite` is treated as
+   generated.
+5. Configure supported LLM clients, such as Codex or Claude, to start
+   `decision-ledger-mcp` with the chosen ledger home or database path.
+6. Restart or refresh those clients so the MCP server is visible.
+7. Test the setup by listing tools, adding a small record, retrieving it, and
+   serving `decision-wiki-server` on a free localhost port.
+8. Import any durable decisions, ideas, assumptions, or snag lists already
+   buried in markdown, tickets, or planning docs into the ledger.
+
+The underlying commands the agent will usually run are:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -e . pytest
+./bin/decisions --home ./.decision-ledger init
+./bin/decision-wiki-server --home ./.decision-ledger --port 0
+```
+
+If the ledger home is shared outside the repo, replace `./.decision-ledger` with
+that path. The MCP server can be started with:
+
+```bash
+./bin/decision-ledger-mcp --home ./.decision-ledger
+```
+
+After setup, useful requests for the user to make are:
+
+```text
+Record this as a decision under subject X and attach the relevant files as evidence.
+Gather the current context for subject Y before we change anything.
+Import the decisions and snags from this markdown plan into the ledger.
+Mark decisions under subject X from before 11am as superseded by this new record.
+Store this HTML page or screenshot as an artifact under subject Z.
+Save a reusable view of all open snags and make it appear in the wiki.
+Serve the top-level wiki for me on a free localhost port.
+```
+
+## Capabilities
+
+- Capture durable records: thoughts, ideas, snags, decisions, assumptions,
+  questions, findings, plans, and notes.
+- Organize records in a dot-separated subject tree, so an agent can gather
+  context for one namespace or browse all top-level topics.
+- Preserve audit history through append-only JSONL events, while using SQLite
+  as a generated projection for fast queries.
+- Attach evidence to records, including files, URLs, commands, tickets, logs,
+  notes, commits, and artifact references.
+- Track validation separately from lifecycle status, so a current decision can
+  still be marked unvalidated, partially validated, validated, contested, or
+  invalidated.
+- Supersede or withdraw older records without deleting them, which supports
+  "forget this for future reasoning" while retaining the audit trail.
+- Associate records across namespaces when a relationship is not captured by
+  the subject tree alone.
+- Search with lexical and optional local vector retrieval, exposed as one
+  hybrid result for agent use.
+- Store ancillary HTML and image artifacts, such as generated explanations,
+  diagrams, screenshots, and small local visualizations.
+- Save reusable view definitions and render them live in the wiki from current
+  ledger data.
+- Serve a live local wiki for browsing subjects, records, evidence,
+  associations, artifacts, and saved views.
+- Import durable decisions, ideas, assumptions, and snag lists from markdown or
+  other planning documents into structured ledger records.
+
+## Screenshots
+
+These screenshots are generated from a sanitized temporary sample ledger.
+
+### Live Wiki Home
+
+![Decision Ledger live wiki home](docs/screenshots/wiki-home.png)
+
+### Subject Page
+
+![Decision Ledger subject page](docs/screenshots/wiki-subject.png)
+
+### Subject View With Artifacts
+
+![Decision Ledger subject view with artifacts](docs/screenshots/wiki-subject-view.png)
+
+### Saved View
+
+![Decision Ledger saved view](docs/screenshots/wiki-saved-view.png)
+
 The core idea is:
 
 - Namespace JSONL event files are the canonical store.
@@ -26,12 +147,12 @@ the `decision-ledger` subject tree. Browse them with `decision-wiki-server`.
 Examples this project should support:
 
 ```text
-Forget decisions on connected-ai.auth.oidc from before 11am this morning.
-Gather all previous thoughts about connected-ai.retrieval.wiki.
-Show current accepted decisions under connected-ai.auth.
+Forget decisions on product.auth.oauth from before 11am this morning.
+Gather all previous thoughts about product.retrieval.wiki.
+Show current accepted decisions under product.auth.
 Show superseded assumptions that influenced this decision.
 Show everything associated with this record, even outside its namespace.
-Serve connected-ai.auth as a live wiki for review.
+Serve product.auth as a live wiki for review.
 ```
 
 In this context, "forget" means "exclude from future reasoning by marking as
@@ -43,16 +164,9 @@ superseded or withdrawn", not "delete audit history".
 - [examples/example-record.yaml](examples/example-record.yaml): example record
   with evidence and associations.
 
-## CLI Quick Start
+## CLI Reference
 
-Create a local development environment:
-
-```bash
-python -m venv .venv
-.venv/bin/python -m pip install -e . pytest
-```
-
-Run the CLI from this repo:
+Initialize a ledger from this repo:
 
 ```bash
 ./bin/decisions init
@@ -78,9 +192,9 @@ The canonical git-friendly layout is:
 ```text
 .decision-ledger/
   events/
-    connected-ai/
+    product/
       auth/
-        oidc/
+        oauth/
           client-persistence.jsonl
   ledger.sqlite
 ```
@@ -106,12 +220,12 @@ embedding pass.
 Add an idea:
 
 ```bash
-./bin/decisions add connected-ai.auth.oidc.client-persistence \
+./bin/decisions add product.auth.oauth.client-persistence \
   --kind idea \
-  --summary "MCP dynamic clients may be clobbered by identity restarts" \
-  --body "Idea: dynamic clients may be overwritten by another identity deployment sharing the same backing DB." \
+  --summary "OAuth clients should survive service restarts" \
+  --body "Idea: client registration data should be stored outside process memory so restart behavior does not lose it." \
   --tag mcp \
-  --tag oidc
+  --tag oauth
 ```
 
 Use `kind=idea` for possible directions that have not yet been chosen. When an
@@ -124,14 +238,14 @@ entries that should be retrievable alongside the rest of the audit trail.
 Store a self-contained HTML artifact or image artifact:
 
 ```bash
-./bin/decisions artifact add-html connected-ai.demos.bubblebrook \
-  --file ~/Downloads/demo.html \
-  --summary "Bubblebrook demo HTML" \
+./bin/decisions artifact add-html product.demos.sample \
+  --file ~/Downloads/sample-demo.html \
+  --summary "Sample demo HTML" \
   --visibility internal
 
-./bin/decisions artifact add-image connected-ai.demos.bubblebrook \
-  --file ~/Downloads/bubblebrook_overview.png \
-  --summary "Bubblebrook overview diagram" \
+./bin/decisions artifact add-image product.demos.sample \
+  --file ~/Downloads/sample-overview.png \
+  --summary "Sample overview diagram" \
   --visibility internal
 ```
 
@@ -152,17 +266,17 @@ data at `/saved-views/<view_id>.html`.
 Set validation state separately from lifecycle status:
 
 ```bash
-./bin/decisions add connected-ai.auth.oidc.client-persistence \
+./bin/decisions add product.auth.oauth.client-persistence \
   --kind finding \
   --status active \
   --validation-state partially_validated \
-  --summary "Dynamic clients may be clobbered" \
+  --summary "Client registrations may be volatile" \
   --body "This has supporting evidence, but has not yet been reproduced end to end."
 
 ./bin/decisions validate rec_... \
   --state validated \
-  --validated-by neil \
-  --note "Confirmed against current OpenIddictApplications rows and restart logs"
+  --validated-by alice \
+  --note "Confirmed against current database rows and restart logs"
 ```
 
 `status` is lifecycle/currentness. `validation_state` is epistemic quality:
@@ -178,8 +292,8 @@ Attach evidence:
 ```bash
 ./bin/decisions evidence add rec_... \
   --type file \
-  --uri /home/neil/Dev/fc.identity \
-  --note "Identity service source and seeding behavior"
+  --uri /path/to/project/service.py \
+  --note "Service source file that implements the behavior"
 ```
 
 Associate records:
@@ -187,19 +301,19 @@ Associate records:
 ```bash
 ./bin/decisions associate rec_... rec_... \
   --relation depends_on \
-  --note "This auth thought depends on the shared DB ownership finding"
+  --note "This auth thought depends on the persistence ownership finding"
 ```
 
 Gather current context for a namespace:
 
 ```bash
-./bin/decisions gather connected-ai.auth
+./bin/decisions gather product.auth
 ```
 
 List available topics in the subject tree:
 
 ```bash
-./bin/decisions topics connected-ai.auth --direct
+./bin/decisions topics product.auth --direct
 ```
 
 Run semantic vector search over ledger records:
@@ -211,7 +325,7 @@ Run semantic vector search over ledger records:
 Build a mixed subject view from records and artifacts:
 
 ```bash
-./bin/decisions view connected-ai.bubblebrook.demo-artifacts
+./bin/decisions view product.demos.sample
 ```
 
 MCP consumers can use `decision_create_view` for a transient filtered view and
@@ -255,7 +369,7 @@ Supersede a single record:
 Bulk supersede records under a namespace before a timestamp:
 
 ```bash
-./bin/decisions supersede connected-ai.auth.oidc \
+./bin/decisions supersede product.auth.oauth \
   --before "2026-05-07 11:00" \
   --replacement rec_new \
   --note "Earlier records were superseded by the 11am design revision"
@@ -268,7 +382,7 @@ Serve a subject subtree as a live wiki:
 
 ```bash
 ./bin/decision-wiki-server decision-ledger \
-  --home /home/neil/Dev/.decision-ledger \
+  --home /path/to/workspace/.decision-ledger \
   --port 8766
 ```
 
@@ -293,8 +407,8 @@ Example Codex MCP config:
 
 ```toml
 [mcp_servers.decision-ledger]
-command = "/home/neil/Dev/decision-ledger/bin/decision-ledger-mcp"
-args = ["--db", "/home/neil/.decision-ledger/ledger.sqlite"]
+command = "/path/to/decision-ledger/bin/decision-ledger-mcp"
+args = ["--home", "/path/to/workspace/.decision-ledger"]
 ```
 
 The MCP server exposes tools for:

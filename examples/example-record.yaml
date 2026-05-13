@@ -1,45 +1,44 @@
 id: rec_20260507_113012_abcd
-subject: connected-ai.auth.oidc.client-persistence
+subject: product.auth.oauth.client-persistence
 kind: thought
 status: active
 created_at: "2026-05-07T11:30:12+01:00"
-created_by: neil
-summary: MCP dynamic clients may be clobbered by shared DB identity restarts.
+created_by: alice
+summary: OAuth client registrations should survive service restarts.
 body: |
-  The working thought is that dynamic MCP clients are not simply disappearing
-  because the active API process forgot them. They may be overwritten or
-  removed when another identity deployment sharing the same backing database
-  restarts and runs older seeding or cleanup behavior.
+  The working thought is that dynamically registered clients should be
+  persisted outside process memory. If they only live in memory, a restart could
+  remove registrations that other tools still expect to use.
 
-  This should be treated as a cross-environment identity persistence issue until
-  disproven with current database state, logs, and deployment restart evidence.
+  This should be treated as a persistence design issue until disproven with
+  current storage state, service logs, and restart evidence.
 tags:
   - mcp
-  - oidc
-  - openiddict
-  - invalid_client
+  - oauth
+  - persistence
+  - restart-behavior
 related_subjects:
-  - connected-ai.environments.dev-aks.identity
-  - connected-ai.runtime.identity.restart-behavior
+  - product.environments.staging.auth
+  - product.runtime.auth.restart-behavior
 evidence:
   - type: file
-    uri: /home/neil/Dev/fc.identity
-    label: fc.identity repo
-    note: Identity service source and seeding behavior should be inspected here.
+    uri: /path/to/product/auth-service.py
+    label: Auth service source
+    note: Source and startup behavior should be inspected here.
     export_visibility: internal
   - type: command
-    uri: "SELECT ClientId FROM OpenIddictApplications WHERE ClientId LIKE 'mcp[_]%';"
-    label: OpenIddict dynamic client check
-    note: Database query that proves whether MCP clients currently exist.
+    uri: "SELECT client_id FROM oauth_clients WHERE client_id LIKE 'mcp_%';"
+    label: OAuth client persistence check
+    note: Database query that proves whether registered clients currently exist.
     export_visibility: internal
   - type: artifact
-    uri: /home/neil/Dev/docs/evidence/example-openiddict-mcp-clients.txt
-    label: Captured OpenIddict query output
+    uri: /path/to/evidence/oauth-client-query-output.txt
+    label: Captured OAuth client query output
     note: Example placeholder for immutable captured evidence.
     observed_at: "2026-05-07T11:35:00+01:00"
     export_visibility: private
 associations:
   - to: rec_20260507_120000_efgh
     relation: depends_on
-    note: This thought depends on knowing which branch environments share the same Identity database.
+    note: This thought depends on knowing which component owns client persistence.
     source: manual

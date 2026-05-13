@@ -1,6 +1,53 @@
+# Python bytecode and caches
 __pycache__/
-.pytest_cache/
-.venv/
 *.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Local configuration and secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local Decision Ledger projections/state. JSONL ledgers in consuming projects
+# may intentionally be committed, but this tool repo should not publish local
+# runtime state by accident.
+.decision-ledger/
 *.sqlite
 *.sqlite-*
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local Playwright/browser artifacts
+.playwright-mcp/
+test-results/
+playwright-report/

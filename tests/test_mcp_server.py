@@ -81,12 +81,12 @@ def test_prompt_get_bakes_in_usage_guidance(tmp_path: Path) -> None:
         "prompts/get",
         {
             "name": "capture-decision-context",
-            "arguments": {"subject": "connected-ai.auth"},
+            "arguments": {"subject": "product.auth"},
         },
     )
 
     text = response["result"]["messages"][0]["content"]["text"]
-    assert "Subject focus: connected-ai.auth" in text
+    assert "Subject focus: product.auth" in text
     assert "Gather current context" in text
     assert "existing markdown contains durable decisions" in text
     assert "Preserve detail" in text
@@ -109,23 +109,23 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
         server,
         "decision_add_record",
         {
-            "subject": "connected-ai.auth.oidc",
+            "subject": "product.auth.oauth",
             "kind": "idea",
             "summary": "Old idea",
-            "body": "Older OIDC idea.",
-            "tags": ["oidc"],
+            "body": "Older OAuth idea.",
+            "tags": ["oauth"],
         },
     )["id"]
     new = tool_call(
         server,
         "decision_add_record",
         {
-            "subject": "connected-ai.auth.oidc",
+            "subject": "product.auth.oauth",
             "kind": "decision",
             "status": "accepted",
             "validation_state": "partially_validated",
             "summary": "New decision",
-            "body": "New OIDC direction.",
+            "body": "New OAuth direction.",
         },
     )["id"]
 
@@ -157,33 +157,33 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
         server,
         "decision_add_html_artifact",
         {
-            "subject": "connected-ai.auth.oidc",
+            "subject": "product.auth.oauth",
             "record_id": new,
-            "html": "<!doctype html><script>window.ok=true</script><p>OIDC artifact</p>",
-            "label": "OIDC artifact",
+            "html": "<!doctype html><script>window.ok=true</script><p>OAuth artifact</p>",
+            "label": "OAuth artifact",
             "visibility": "internal",
         },
     )
     assert artifact["id"].startswith("art_")
     assert artifact["record_id"] == new
-    listed_artifacts = tool_call(server, "decision_list_artifacts", {"subject": "connected-ai.auth"})
+    listed_artifacts = tool_call(server, "decision_list_artifacts", {"subject": "product.auth"})
     assert [item["id"] for item in listed_artifacts["result"]] == [artifact["id"]]
-    subject_view = tool_call(server, "decision_view_subject", {"subject": "connected-ai.auth"})
+    subject_view = tool_call(server, "decision_view_subject", {"subject": "product.auth"})
     assert artifact["id"] in {entry.get("artifact_id") for entry in subject_view["entries"]}
 
     queried = tool_call(
         server,
         "decision_query_records",
-        {"subject": "connected-ai.auth", "kind": "decision", "include_body": True},
+        {"subject": "product.auth", "kind": "decision", "include_body": True},
     )
     assert [row["id"] for row in queried["result"]] == [new]
-    assert queried["result"][0]["body"] == "New OIDC direction."
+    assert queried["result"][0]["body"] == "New OAuth direction."
 
     created_view = tool_call(
         server,
         "decision_create_view",
         {
-            "subject": "connected-ai.auth",
+            "subject": "product.auth",
             "kind": "decision",
             "title": "Auth Decisions View",
         },
@@ -198,7 +198,7 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
         "decision_save_view",
         {
             "subject": "decision-ledger.test-views",
-            "query_subject": "connected-ai.auth",
+            "query_subject": "product.auth",
             "kind": "decision",
             "title": "Saved Auth Decisions",
             "visibility": "internal",
@@ -220,18 +220,18 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
     )
     assert superseded["superseded"] == [old]
 
-    gathered = tool_call(server, "decision_gather", {"subject": "connected-ai.auth", "include_obsolete": True})
+    gathered = tool_call(server, "decision_gather", {"subject": "product.auth", "include_obsolete": True})
     assert [row["id"] for row in gathered["current"]] == [new]
     assert [row["id"] for row in gathered["obsolete"]] == [old]
     assert gathered["evidence"][0]["uri"] == "https://example.test/evidence"
 
-    searched = tool_call(server, "decision_search", {"query": "OIDC", "limit": 5})
-    assert searched["query"] == "OIDC"
+    searched = tool_call(server, "decision_search", {"query": "OAuth", "limit": 5})
+    assert searched["query"] == "OAuth"
     assert searched["lexical"]["available"] is True
     assert searched["combined"][0]["id"] == new
     assert "lexical" in searched["combined"][0]["sources"]
 
-    event_file = tmp_path / "events" / "connected-ai" / "auth" / "oidc.jsonl"
+    event_file = tmp_path / "events" / "product" / "auth" / "oauth.jsonl"
     assert event_file.exists()
     assert '"event_type":"superseded"' in event_file.read_text(encoding="utf-8")
     saved_view_event_file = tmp_path / "events" / "decision-ledger" / "test-views.jsonl"
@@ -270,15 +270,15 @@ def test_mcp_list_topics_tool(tmp_path: Path) -> None:
         server,
         "decision_add_record",
         {
-            "subject": "connected-ai.auth.oidc",
-            "body": "OIDC thought.",
+            "subject": "product.auth.oauth",
+            "body": "OAuth thought.",
         },
     )
     tool_call(
         server,
         "decision_add_record",
         {
-            "subject": "connected-ai.auth.mcp",
+            "subject": "product.auth.mcp",
             "body": "MCP thought.",
         },
     )
@@ -287,14 +287,14 @@ def test_mcp_list_topics_tool(tmp_path: Path) -> None:
         server,
         "decision_list_topics",
         {
-            "subject": "connected-ai.auth",
+            "subject": "product.auth",
             "direct_only": True,
         },
     )["result"]
 
     assert [topic["subject"] for topic in topics] == [
-        "connected-ai.auth",
-        "connected-ai.auth.mcp",
-        "connected-ai.auth.oidc",
+        "product.auth",
+        "product.auth.mcp",
+        "product.auth.oauth",
     ]
     assert topics[0]["subtree_records"] == 2
