@@ -1,6 +1,6 @@
 # Decision Ledger
 
-Decision Ledger is a local-first record of thoughts, ideas, decisions,
+Decision Ledger is a local-first record of thoughts, ideas, snags, decisions,
 assumptions, questions, evidence, and associations. It is intended to give
 humans and LLM agents a shared, auditable memory that is more precise than
 loose markdown, but still easy to browse.
@@ -117,6 +117,9 @@ Add an idea:
 Use `kind=idea` for possible directions that have not yet been chosen. When an
 idea becomes the selected direction, create a `kind=decision` record and link or
 supersede the idea record if that history will matter later.
+
+Use `kind=snag` for known issues, rough edges, cleanup items, and snag-list
+entries that should be retrievable alongside the rest of the audit trail.
 
 Set validation state separately from lifecycle status:
 
@@ -289,8 +292,9 @@ The MCP surface deliberately bakes in usage guidance:
 - preserve detail rather than shrinking source material, but split multi-decision
   material into linked records when parts need independent subjects, tags,
   evidence, statuses, or supersession paths
-- process durable decisions and ideas buried in markdown, tickets, transcripts,
-  or repo docs into the subject tree, with the source document as evidence
+- process durable decisions, ideas, and snag lists buried in markdown, tickets,
+  transcripts, or repo docs into the subject tree, with the source document as
+  evidence
 - start `decision-wiki-server` for browsable wiki views
 
 The implementation follows the MCP stdio shape: newline-delimited JSON-RPC on

@@ -242,7 +242,29 @@ def test_cli_accepts_idea_kind(tmp_path: Path, capsys) -> None:
     assert record["kind"] == "idea"
 
 
-def test_existing_db_kind_constraint_migrates_for_ideas(tmp_path: Path) -> None:
+def test_cli_accepts_snag_kind(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    assert run_cli(
+        db_path,
+        "add",
+        "connected-ai.auth.oidc.client-persistence",
+        "--kind",
+        "snag",
+        "--summary",
+        "Client cleanup snag",
+        "--body",
+        "Snag: migrate old dynamic-client cleanup notes into the ledger.",
+        "--json",
+    ) == 0
+    record_id = json.loads(capsys.readouterr().out)["id"]
+
+    assert run_cli(db_path, "show", record_id, "--json") == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["kind"] == "snag"
+
+
+def test_existing_db_kind_constraint_migrates_for_new_kinds(tmp_path: Path) -> None:
     db_path = tmp_path / "ledger.sqlite"
     raw = sqlite3.connect(db_path)
     raw.executescript(
@@ -291,6 +313,7 @@ def test_existing_db_kind_constraint_migrates_for_ideas(tmp_path: Path) -> None:
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'records'"
     ).fetchone()["sql"]
     assert "'idea'" in table_sql
+    assert "'snag'" in table_sql
     conn.execute(
         """
         INSERT INTO records (
@@ -305,9 +328,24 @@ def test_existing_db_kind_constraint_migrates_for_ideas(tmp_path: Path) -> None:
         """
     )
     conn.commit()
+    conn.execute(
+        """
+        INSERT INTO records (
+          id, subject, kind, status, validation_state, summary, body,
+          created_at, updated_at, valid_from, export_visibility
+        )
+        VALUES (
+          'rec_snag', 'decision-ledger.snag', 'snag', 'active', 'unvalidated',
+          'New snag', 'A migrated ledger can store snags.', '2026-05-07T11:05:00+01:00',
+          '2026-05-07T11:05:00+01:00', '2026-05-07T11:05:00+01:00', 'private'
+        )
+        """
+    )
+    conn.commit()
 
     assert conn.execute("SELECT kind FROM records WHERE id = 'rec_old'").fetchone()["kind"] == "thought"
     assert conn.execute("SELECT kind FROM records WHERE id = 'rec_idea'").fetchone()["kind"] == "idea"
+    assert conn.execute("SELECT kind FROM records WHERE id = 'rec_snag'").fetchone()["kind"] == "snag"
     assert conn.execute("SELECT rowid FROM records_fts WHERE records_fts MATCH 'survives'").fetchone()["rowid"] == 7
 
 

@@ -56,6 +56,7 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert all("inputSchema" in tool for tool in tools)
     add_record_tool = next(tool for tool in tools if tool["name"] == "decision_add_record")
     assert "idea" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
+    assert "snag" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
 
     prompts = request(server, "prompts/list")["result"]["prompts"]
     assert {prompt["name"] for prompt in prompts} == {

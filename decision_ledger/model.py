@@ -8,7 +8,7 @@ from typing import Any
 
 CURRENT_STATUSES = ("active", "proposed", "accepted", "resolved")
 OBSOLETE_STATUSES = ("superseded", "rejected", "withdrawn", "archived")
-RECORD_KINDS = ("thought", "idea", "decision", "assumption", "question", "finding", "plan", "note")
+RECORD_KINDS = ("thought", "idea", "snag", "decision", "assumption", "question", "finding", "plan", "note")
 VALIDATION_STATES = ("unvalidated", "partially_validated", "validated", "contested", "invalidated")
 SYMMETRIC_RELATIONS = {"associated_with", "duplicates"}
 

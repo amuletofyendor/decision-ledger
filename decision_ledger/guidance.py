@@ -31,18 +31,18 @@ Best practices:
   evidence, tags, and related subjects structured.
 - Preserve the user's information. Do not shrink or pare down important detail
   just to make a tidy record. Instead, split long material into enough linked
-  records that each separable idea, decision, assumption, question, finding, or plan
+  records that each separable idea, snag, decision, assumption, question, finding, or plan
   can carry its own subject, kind, status, evidence, tags, and supersession path.
-- Capture decisions and ideas even when they seem small, incidental, or
+- Capture decisions, ideas, and snags even when they seem small, incidental, or
   unfinished. The intention is to retain as many useful fragments as possible
   before they are lost to context compaction or buried in markdown documents.
 - Prefer one record per durable claim or decision when pieces may be retrieved,
   challenged, evidenced, tagged, or superseded independently. Keep shared
   background in a parent or context record and associate child records back to it.
-- When you find existing decisions, assumptions, or durable ideas buried in
-  markdown, chat transcripts, tickets, or repo docs, process them into the
-  decision tree as records and attach the source document as evidence. Imported
-  material should normally start as unvalidated unless you also verify it.
+- When you find existing decisions, assumptions, durable ideas, or snag lists
+  buried in markdown, chat transcripts, tickets, or repo docs, process them into
+  the decision tree as records and attach the source document as evidence.
+  Imported material should normally start as unvalidated unless you also verify it.
 - When the user asks to see, make, generate, or show a wiki, they usually want
   a browsable result. Prefer the live decision-wiki-server on a free localhost
   port so pages are rendered from current ledger data on demand. The live server
@@ -64,12 +64,12 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
    evidence points against it.
 6. Associate related records across namespaces when namespace alone is too weak.
 7. Supersede older active records when the user says they are obsolete.
-8. If existing markdown contains durable decisions or ideas, import them into
+8. If existing markdown contains durable decisions, ideas, or snag lists, import them into
    the subject tree and link the markdown file as evidence.
 9. Preserve detail, but split multi-decision material into linked records when
    separate parts need independent subjects, tags, evidence, statuses, or future
    supersession.
-10. Do not skip capture just because a decision or idea seems small. Retain it
+10. Do not skip capture just because a decision, idea, or snag seems small. Retain it
    before context compaction or markdown burial can make it hard to recover.
 11. If the user asks for a wiki, normally start decision-wiki-server on a free
    localhost port so the user can browse current ledger data immediately.
@@ -81,7 +81,7 @@ Do not delete audit history for normal forgetting. Supersede it and explain why.
 TOOL_GUIDANCE = {
     "decision_guidance": "Return the built-in Decision Ledger operating guidance. Call this when uncertain how to use the ledger.",
     "decision_rebuild_projection": "Rebuild the generated SQLite projection from canonical namespace JSONL event files. Use after pulling event changes from git or when SQLite is missing/stale.",
-    "decision_add_record": "Create a thought, idea, decision, assumption, question, finding, plan, or note. Use for durable context the user may want to retrieve later.",
+    "decision_add_record": "Create a thought, idea, snag, decision, assumption, question, finding, plan, or note. Use for durable context the user may want to retrieve later.",
     "decision_add_evidence": "Attach evidence to an existing record. Prefer this for audit-worthy claims, live checks, source files, URLs, commands, and captured artifacts.",
     "decision_validate_record": "Change a record's validation state without changing its lifecycle status. Use validated for checked claims, contested for disputed claims, and invalidated when evidence disproves a record.",
     "decision_associate_records": "Create a graph link between two records when subject namespace alone does not capture their relationship.",

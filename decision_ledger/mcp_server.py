@@ -165,7 +165,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 TOOL_GUIDANCE["decision_add_record"],
                 {
                     "subject": string_schema("Dot-separated primary subject, for example connected-ai.auth.oidc.client-persistence."),
-                    "body": string_schema("Free-form thought, idea, decision, assumption, question, finding, plan, or note body."),
+                    "body": string_schema("Free-form thought, idea, snag, decision, assumption, question, finding, plan, or note body."),
                     "kind": enum_schema(list(RECORD_KINDS), "Record kind."),
                     "status": enum_schema(["active", "proposed", "accepted", "rejected", "superseded", "withdrawn", "resolved", "archived"], "Record status."),
                     "validation_state": enum_schema(list(VALIDATION_STATES), "Validation state. Keep this separate from lifecycle status."),

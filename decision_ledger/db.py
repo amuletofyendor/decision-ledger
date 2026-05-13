@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from .model import RECORD_KINDS
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO_ROOT / "schema" / "001_initial.sql"
@@ -22,7 +24,7 @@ def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
 def apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     migrate_validation_columns(conn)
-    migrate_record_kind_idea(conn)
+    migrate_record_kind_constraint(conn)
     migrate_record_events_validation_type(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_records_validation_state ON records(validation_state)")
     conn.commit()
@@ -46,7 +48,7 @@ def migrate_validation_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE records ADD COLUMN validation_note TEXT")
 
 
-def migrate_record_kind_idea(conn: sqlite3.Connection) -> None:
+def migrate_record_kind_constraint(conn: sqlite3.Connection) -> None:
     row = conn.execute(
         """
         SELECT sql
@@ -54,13 +56,15 @@ def migrate_record_kind_idea(conn: sqlite3.Connection) -> None:
         WHERE type = 'table' AND name = 'records'
         """
     ).fetchone()
-    if not row or "'idea'" in (row["sql"] or ""):
+    table_sql = row["sql"] if row else ""
+    if not table_sql or all(f"'{kind}'" in table_sql for kind in RECORD_KINDS):
         return
 
+    kind_values = ", ".join(f"'{kind}'" for kind in RECORD_KINDS)
     conn.execute("PRAGMA foreign_keys = OFF")
     try:
         conn.executescript(
-            """
+            f"""
             DROP TRIGGER IF EXISTS records_ai;
             DROP TRIGGER IF EXISTS records_ad;
             DROP TRIGGER IF EXISTS records_au;
@@ -69,7 +73,7 @@ def migrate_record_kind_idea(conn: sqlite3.Connection) -> None:
               id TEXT PRIMARY KEY,
               subject TEXT NOT NULL,
               kind TEXT NOT NULL CHECK (
-                kind IN ('thought', 'idea', 'decision', 'assumption', 'question', 'finding', 'plan', 'note')
+                kind IN ({kind_values})
               ),
               status TEXT NOT NULL CHECK (
                 status IN ('active', 'proposed', 'accepted', 'rejected', 'superseded', 'withdrawn', 'resolved', 'archived')
