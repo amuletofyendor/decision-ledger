@@ -399,6 +399,24 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 include_obsolete=bool(args.get("include_obsolete", False)),
             ),
         ),
+        "decision_view_subject": (
+            tool_definition(
+                "decision_view_subject",
+                "Build Subject View",
+                TOOL_GUIDANCE["decision_view_subject"],
+                {
+                    "subject": string_schema("Subject prefix to view."),
+                    "include_obsolete": {"type": "boolean", "description": "Include obsolete records."},
+                    "limit": {"type": "integer", "description": "Maximum record count to source before adding artifacts."},
+                },
+                required=["subject"],
+            ),
+            lambda args: ledger.subject_view(
+                require_str(args, "subject"),
+                include_obsolete=bool(args.get("include_obsolete", False)),
+                limit=int(args.get("limit", 200)),
+            ),
+        ),
         "decision_search": (
             tool_definition(
                 "decision_search",

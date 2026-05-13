@@ -168,6 +168,13 @@ def render_request(
             html = render_subject_page(root_subject, subject, records, profile)
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
+        if route.startswith("/views/subjects/"):
+            subject = view_subject_from_route(route)
+            if subject is None:
+                return not_found("View not found")
+            html = render_subject_view_page(root_subject, subject, records, profile)
+            return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
+
         if route.startswith("/records/"):
             record_id = record_id_from_route(route)
             if record_id not in visible_record_ids:
@@ -264,6 +271,7 @@ def render_subject_page(root_subject: str, subject: str, records: list[dict[str,
     body = [
         f"<p class=\"breadcrumb\"><a href=\"/\">wiki</a> / {breadcrumb(subject)}</p>",
         f"<p class=\"meta\">Root: {h(root_subject or '(all)')}. Profile: {h(profile)}. Records in subtree: {len(subtree)}.</p>",
+        f"<p><a href=\"{h(subject_view_url(subject))}\">Open dated view for this subject</a></p>",
     ]
     if direct_children:
         body.extend(["<h2>Child Subjects</h2>", render_subject_tree(direct_children)])
@@ -272,6 +280,58 @@ def render_subject_page(root_subject: str, subject: str, records: list[dict[str,
     body.extend(["<h2>Current Records In Subtree</h2>", render_record_list(current)])
     body.extend(["<h2>Obsolete Records In Subtree</h2>", render_record_list(obsolete)])
     return page(subject, body, "/assets/styles.css")
+
+
+def render_subject_view_page(root_subject: str, subject: str, records: list[dict[str, Any]], profile: str) -> str:
+    subtree = [
+        record
+        for record in records
+        if record["subject"] == subject or record["subject"].startswith(subject + ".")
+    ]
+    entries: list[dict[str, Any]] = []
+    for record in subtree:
+        entries.append({"entry_type": "record", "created_at": record["created_at"], "record": record})
+        for artifact in record.get("artifacts", []):
+            entries.append({"entry_type": "artifact", "created_at": artifact["created_at"], "record": record, "artifact": artifact})
+    entries.sort(key=lambda item: (item["created_at"], item["record"]["id"]), reverse=True)
+    body = [
+        f"<p class=\"breadcrumb\"><a href=\"/\">wiki</a> / <a href=\"{h(subject_url(subject))}\">{h(subject)}</a> / view</p>",
+        f"<p class=\"meta\">Root: {h(root_subject or '(all)')}. Profile: {h(profile)}. Entries: {len(entries)}.</p>",
+    ]
+    if not entries:
+        body.append("<p class=\"empty\">none</p>")
+    for entry in entries:
+        record = entry["record"]
+        if entry["entry_type"] == "record":
+            title = record.get("summary") or record["id"]
+            body.append(
+                "<section class=\"timeline-entry\">"
+                f"<div>{badge(record['kind'])}{badge(record['status'], 'status')}{validation_badge(record['validation_state'])}</div>"
+                f"<h2><a href=\"{h(record_url(record['id']))}\">{h(title)}</a></h2>"
+                f"<p class=\"meta\">{h(record['subject'])} · {h(record['created_at'])}</p>"
+                f"<pre class=\"body\">{h(record['body'])}</pre>"
+                "</section>"
+            )
+        else:
+            artifact = entry["artifact"]
+            title = artifact.get("label") or artifact.get("summary") or artifact["id"]
+            artifact_url_value = artifact_url(artifact["id"])
+            if artifact["type"] == "html":
+                preview = f"<iframe class=\"artifact-frame\" src=\"{h(artifact_url_value)}\" title=\"{h(title)}\"></iframe>"
+            elif artifact["content_type"].startswith("image/"):
+                preview = f"<img class=\"artifact-image\" src=\"{h(artifact_url_value)}\" alt=\"{h(title)}\">"
+            else:
+                preview = f"<a href=\"{h(artifact_url_value)}\">Open artifact</a>"
+            body.append(
+                "<section class=\"timeline-entry\">"
+                f"<div>{badge('artifact')}{badge(artifact['type'])}</div>"
+                f"<h2><a href=\"{h(artifact_url_value)}\">{h(title)}</a></h2>"
+                f"<p class=\"meta\">{h(record['subject'])} · {h(artifact['created_at'])} · record "
+                f"<a href=\"{h(record_url(record['id']))}\">{h(record['id'])}</a></p>"
+                f"{preview}"
+                "</section>"
+            )
+    return page(f"View: {subject}", body, "/assets/styles.css")
 
 
 def render_record_page(record: dict[str, Any], visible_record_ids: set[str]) -> str:
@@ -444,6 +504,16 @@ def subject_from_route(route: str) -> str | None:
     return ".".join(parts)
 
 
+def view_subject_from_route(route: str) -> str | None:
+    path = route.removeprefix("/views/subjects/").removesuffix("/index.html").strip("/")
+    if not path:
+        return None
+    parts = [part for part in path.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        return None
+    return ".".join(parts)
+
+
 def record_id_from_route(route: str) -> str:
     return route.removeprefix("/records/").removesuffix("/index.html").strip("/")
 
@@ -465,8 +535,16 @@ def subject_url(subject: str) -> str:
     return "/subjects/" + "/".join(subject.split(".")) + "/index.html"
 
 
+def subject_view_url(subject: str) -> str:
+    return "/views/subjects/" + "/".join(subject.split(".")) + "/index.html"
+
+
 def record_url(record_id: str) -> str:
     return f"/records/{record_id}/index.html"
+
+
+def artifact_url(artifact_id: str) -> str:
+    return f"/artifacts/{artifact_id}/content"
 
 
 def artifact_bytes(paths: LedgerPaths, artifact: dict[str, Any]) -> bytes:

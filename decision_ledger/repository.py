@@ -485,6 +485,58 @@ class Ledger:
         }
         return grouped
 
+    def subject_view(
+        self,
+        subject: str,
+        *,
+        include_obsolete: bool = False,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        rows = self.list_records(
+            subject=subject,
+            include_obsolete=include_obsolete,
+            limit=limit,
+        )
+        entries: list[dict[str, Any]] = []
+        for row in rows:
+            record = self.get_record(row["id"])
+            if not record:
+                continue
+            entries.append(
+                {
+                    "entry_type": "record",
+                    "created_at": record["created_at"],
+                    "record_id": record["id"],
+                    "subject": record["subject"],
+                    "kind": record["kind"],
+                    "status": record["status"],
+                    "validation_state": record["validation_state"],
+                    "summary": record.get("summary"),
+                    "body": record["body"],
+                }
+            )
+            for artifact in record.get("artifacts", []):
+                entries.append(
+                    {
+                        "entry_type": "artifact",
+                        "created_at": artifact["created_at"],
+                        "record_id": artifact["record_id"],
+                        "artifact_id": artifact["id"],
+                        "subject": artifact["subject"],
+                        "artifact_type": artifact["type"],
+                        "content_type": artifact["content_type"],
+                        "label": artifact.get("label"),
+                        "summary": artifact.get("summary"),
+                        "url": f"/artifacts/{artifact['id']}/content",
+                    }
+                )
+        entries.sort(key=lambda item: (item["created_at"], item.get("artifact_id") or item.get("record_id") or ""), reverse=True)
+        return {
+            "subject": subject,
+            "include_obsolete": include_obsolete,
+            "entries": entries,
+        }
+
     def get_record(self, record_id: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
         if not row:

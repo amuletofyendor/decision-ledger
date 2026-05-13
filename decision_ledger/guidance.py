@@ -31,6 +31,9 @@ Best practices:
   captured objects with subjects, timestamps, provenance, visibility, and
   record associations; views are the later synthesis layer over records and
   artifacts.
+- Use decision_view_subject when the user wants an associated slice of records
+  and artifacts from a subject tree. Wiki subject views render these slices as a
+  dated synthesis layer with records and embedded artifacts.
 - Inline CSS and inline JavaScript are acceptable in saved HTML artifacts for
   this trusted local/team ledger model.
 - Add association notes that explain why records are linked.
@@ -101,6 +104,7 @@ TOOL_GUIDANCE = {
     "decision_supersede_record": "Mark one record as superseded by another. Use this for normal forgetting instead of deleting old audit history.",
     "decision_supersede_subject_before": "Bulk-supersede current records under a subject prefix before a timestamp. Use for requests like 'forget decisions on X from before 11am'.",
     "decision_gather": "Gather current context for a subject prefix, including namespace records, associated records, and evidence.",
+    "decision_view_subject": "Build a dated synthesis view for a subject prefix, containing ledger records and their stored artifacts.",
     "decision_search": "Combined lexical and vector search over decision records. Use this as the default fuzzy recall tool before adding duplicate thinking.",
     "decision_vector_search": "Semantic vector search over record subject, metadata, tags, related subjects, summary, and body. Use directly only when isolating vector behavior.",
     "decision_show_record": "Show a complete record with tags, evidence, associations, and audit events.",

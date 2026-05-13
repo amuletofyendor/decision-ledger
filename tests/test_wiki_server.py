@@ -85,6 +85,10 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
         assert "This record exists before the server starts." in record_html
         assert f"/artifacts/{artifact_id}/content" in record_html
 
+        view_html = fetch(base_url, "/views/subjects/decision-ledger/live/index.html")
+        assert "Initial live record" in view_html
+        assert f'<iframe class="artifact-frame" src="/artifacts/{artifact_id}/content"' in view_html
+
         artifact_body, artifact_type = fetch_bytes(base_url, f"/artifacts/{artifact_id}/content")
         assert b"window.inlineOk=true" in artifact_body
         assert artifact_type.startswith("text/html")

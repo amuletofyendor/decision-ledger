@@ -52,6 +52,7 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "decision_add_html_artifact" in tool_names
     assert "decision_add_image_artifact" in tool_names
     assert "decision_list_artifacts" in tool_names
+    assert "decision_view_subject" in tool_names
     assert "decision_vector_search" in tool_names
     assert "decision_supersede_subject_before" in tool_names
     assert "decision_list_topics" in tool_names
@@ -162,6 +163,8 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
     assert artifact["record_id"] == new
     listed_artifacts = tool_call(server, "decision_list_artifacts", {"subject": "connected-ai.auth"})
     assert [item["id"] for item in listed_artifacts["result"]] == [artifact["id"]]
+    subject_view = tool_call(server, "decision_view_subject", {"subject": "connected-ai.auth"})
+    assert artifact["id"] in {entry.get("artifact_id") for entry in subject_view["entries"]}
 
     superseded = tool_call(
         server,

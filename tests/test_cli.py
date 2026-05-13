@@ -270,6 +270,11 @@ def test_html_and_image_artifacts_are_stored_and_rebuilt(tmp_path: Path, capsys)
     artifacts = json.loads(capsys.readouterr().out)
     assert {artifact["id"] for artifact in artifacts} == {html_result["id"], image_result["id"]}
 
+    assert run_cli(db_path, "view", "connected-ai.demos", "--json") == 0
+    view = json.loads(capsys.readouterr().out)
+    assert {entry["entry_type"] for entry in view["entries"]} == {"record", "artifact"}
+    assert html_result["id"] in {entry.get("artifact_id") for entry in view["entries"]}
+
     assert run_cli(db_path, "show", html_result["record_id"], "--json") == 0
     record = json.loads(capsys.readouterr().out)
     assert record["artifacts"][0]["id"] == html_result["id"]

@@ -103,6 +103,13 @@ def build_parser() -> argparse.ArgumentParser:
     gather.add_argument("--json", action="store_true")
     gather.set_defaults(func=cmd_gather)
 
+    view = subparsers.add_parser("view", help="Build a dated subject view containing records and artifacts")
+    view.add_argument("subject")
+    view.add_argument("--all", action="store_true", help="Include obsolete records")
+    view.add_argument("--limit", type=int, default=200)
+    view.add_argument("--json", action="store_true")
+    view.set_defaults(func=cmd_view)
+
     evidence = subparsers.add_parser("evidence", help="Manage evidence")
     evidence_sub = evidence.add_subparsers(dest="evidence_command", required=True)
     evidence_add = evidence_sub.add_parser("add", help="Attach evidence to a record")
@@ -296,6 +303,12 @@ def cmd_vector_search(args: argparse.Namespace, ledger: EventedLedger, _paths: L
 def cmd_gather(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     gathered = ledger.gather(args.subject, include_obsolete=args.all)
     output(gathered, args.json, fallback=format_gathered(gathered))
+    return 0
+
+
+def cmd_view(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    view = ledger.subject_view(args.subject, include_obsolete=args.all, limit=args.limit)
+    output(view, args.json, fallback=format_view(view))
     return 0
 
 
@@ -558,6 +571,27 @@ def format_gathered(gathered: dict[str, Any]) -> str:
                 summary = f" - {row['summary']}" if row.get("summary") else ""
                 relation = f" ({row['relation']})" if row.get("relation") else ""
                 lines.append(f"  - {row['id']} [{row['status']}/{row['kind']}/{row['validation_state']}] {row['subject']}{relation}{summary}")
+    return "\n".join(lines)
+
+
+def format_view(view: dict[str, Any]) -> str:
+    entries = view["entries"]
+    if not entries:
+        return "no view entries"
+    lines = [f"view: {view['subject']}"]
+    for entry in entries:
+        if entry["entry_type"] == "artifact":
+            label = entry.get("label") or entry.get("summary") or entry["artifact_id"]
+            lines.append(
+                f"- {entry['created_at']} artifact/{entry['artifact_type']} "
+                f"{entry['artifact_id']} record={entry['record_id']} {label}"
+            )
+        else:
+            summary = f" - {entry['summary']}" if entry.get("summary") else ""
+            lines.append(
+                f"- {entry['created_at']} record/{entry['kind']} "
+                f"{entry['record_id']} [{entry['status']}/{entry['validation_state']}] {entry['subject']}{summary}"
+            )
     return "\n".join(lines)
 
 

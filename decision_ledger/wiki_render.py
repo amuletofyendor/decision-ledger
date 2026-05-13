@@ -90,6 +90,26 @@ ul.tree li { margin: 4px 0; }
 }
 .tree-subject { font-family: inherit; }
 .body { max-width: 860px; }
+.timeline-entry {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 14px 0;
+  padding: 14px;
+}
+.artifact-frame {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+.artifact-image {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
 """.strip()
 
 

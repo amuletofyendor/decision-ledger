@@ -139,6 +139,9 @@ Artifacts are copied into `.decision-ledger/artifacts/...` and indexed through
 JSONL events. HTML artifacts are trusted local/team content; inline CSS and
 inline JavaScript are allowed. The live wiki serves artifacts at
 `/artifacts/<artifact_id>/content` and links them from the artifact record page.
+It also serves dated subject views at
+`/views/subjects/<subject/path>/index.html`, mixing records with embedded HTML
+and image artifacts from that subtree.
 
 Set validation state separately from lifecycle status:
 
@@ -197,6 +200,12 @@ Run semantic vector search over ledger records:
 
 ```bash
 ./bin/decisions vector-search "local-first retrieval decisions"
+```
+
+Build a mixed subject view from records and artifacts:
+
+```bash
+./bin/decisions view connected-ai.bubblebrook.demo-artifacts
 ```
 
 Vector search uses the generated SQLite projection, not the canonical JSONL
@@ -287,6 +296,7 @@ The MCP server exposes tools for:
 - `decision_supersede_record`
 - `decision_supersede_subject_before`
 - `decision_gather`
+- `decision_view_subject`
 - `decision_search`
 - `decision_vector_search`
 - `decision_show_record`
