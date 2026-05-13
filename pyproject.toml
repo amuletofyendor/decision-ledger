@@ -8,11 +8,17 @@ version = "0.1.0"
 description = "Local-first decision ledger with SQLite-backed audit and retrieval."
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+  "sqlite-vec>=0.1.9",
+]
 
 [project.scripts]
 decisions = "decision_ledger.cli:main"
 decision-ledger-mcp = "decision_ledger.mcp_server:main"
 decision-wiki-server = "decision_ledger.wiki_server:main"
+
+[tool.setuptools]
+packages = ["decision_ledger"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -49,6 +49,7 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "decision_rebuild_projection" in tool_names
     assert "decision_add_record" in tool_names
     assert "decision_validate_record" in tool_names
+    assert "decision_vector_search" in tool_names
     assert "decision_supersede_subject_before" in tool_names
     assert "decision_list_topics" in tool_names
     assert "decision_export_wiki" not in tool_names
@@ -156,6 +157,12 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
     assert [row["id"] for row in gathered["current"]] == [new]
     assert [row["id"] for row in gathered["obsolete"]] == [old]
     assert gathered["evidence"][0]["uri"] == "https://example.test/evidence"
+
+    searched = tool_call(server, "decision_search", {"query": "OIDC", "limit": 5})
+    assert searched["query"] == "OIDC"
+    assert searched["lexical"]["available"] is True
+    assert searched["combined"][0]["id"] == new
+    assert "lexical" in searched["combined"][0]["sources"]
 
     event_file = tmp_path / "events" / "connected-ai" / "auth" / "oidc.jsonl"
     assert event_file.exists()

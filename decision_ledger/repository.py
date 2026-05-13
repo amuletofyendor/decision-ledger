@@ -5,6 +5,13 @@ import sqlite3
 from typing import Any
 
 from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, RECORD_KINDS, VALIDATION_STATES, new_id, now_iso, parse_datetime
+from .vector_search import (
+    Embedder,
+    rebuild_record_vectors,
+    rebuild_record_vectors_if_available,
+    vector_search_records,
+    vector_search_records_if_available,
+)
 
 
 class Ledger:
@@ -384,6 +391,81 @@ class Ledger:
             params,
         ).fetchall()
 
+    def vector_search(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        include_obsolete: bool = False,
+        validation_state: str | None = None,
+        embedder: Embedder | None = None,
+        fail_soft: bool = True,
+    ) -> dict[str, Any]:
+        if fail_soft and embedder is None:
+            return vector_search_records_if_available(
+                self.conn,
+                query,
+                limit=limit,
+                include_obsolete=include_obsolete,
+                validation_state=validation_state,
+            )
+        return vector_search_records(
+            self.conn,
+            query,
+            limit=limit,
+            include_obsolete=include_obsolete,
+            validation_state=validation_state,
+            embedder=embedder,
+        )
+
+    def hybrid_search(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        include_obsolete: bool = False,
+        validation_state: str | None = None,
+        embedder: Embedder | None = None,
+    ) -> dict[str, Any]:
+        lexical_rows = [
+            dict(row)
+            for row in self.search(
+                query,
+                limit=limit,
+                include_obsolete=include_obsolete,
+                validation_state=validation_state,
+            )
+        ]
+        vector_result = self.vector_search(
+            query,
+            limit=limit,
+            include_obsolete=include_obsolete,
+            validation_state=validation_state,
+            embedder=embedder,
+            fail_soft=embedder is None,
+        )
+        combined = fuse_search_results(lexical_rows, vector_result.get("results") or [], limit=limit)
+        return {
+            "query": query,
+            "combined": combined,
+            "lexical": {
+                "available": True,
+                "results": lexical_rows,
+                "returned_count": len(lexical_rows),
+            },
+            "vector": vector_result,
+        }
+
+    def rebuild_vectors(
+        self,
+        *,
+        embedder: Embedder | None = None,
+        fail_soft: bool = True,
+    ) -> dict[str, Any]:
+        if fail_soft and embedder is None:
+            return rebuild_record_vectors_if_available(self.conn)
+        return rebuild_record_vectors(self.conn, embedder=embedder)
+
     def gather(self, subject: str, *, include_obsolete: bool = False) -> dict[str, Any]:
         namespace_rows = self.list_records(
             subject=subject,
@@ -585,6 +667,61 @@ class Ledger:
             "current": int(row["current"] or 0),
             "obsolete": int(row["obsolete"] or 0),
         }
+
+
+def fuse_search_results(
+    lexical_rows: list[dict[str, Any]],
+    vector_rows: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    fused: dict[str, dict[str, Any]] = {}
+    for index, row in enumerate(lexical_rows, start=1):
+        item = fused.setdefault(
+            row["id"],
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "kind": row["kind"],
+                "status": row["status"],
+                "validation_state": row["validation_state"],
+                "summary": row.get("summary"),
+                "created_at": row.get("created_at"),
+                "sources": [],
+                "score": 0.0,
+            },
+        )
+        item["sources"].append("lexical")
+        item["lexical_rank"] = index
+        item["lexical_bm25"] = row.get("rank")
+        item["score"] += 1.0 / (60.0 + index)
+    for index, row in enumerate(vector_rows, start=1):
+        item = fused.setdefault(
+            row["id"],
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "kind": row["kind"],
+                "status": row["status"],
+                "validation_state": row["validation_state"],
+                "summary": row.get("summary"),
+                "created_at": row.get("created_at"),
+                "sources": [],
+                "score": 0.0,
+            },
+        )
+        item["sources"].append("vector")
+        item["vector_rank"] = index
+        item["vector_similarity"] = row.get("similarity")
+        item["vector_distance"] = row.get("distance")
+        item["score"] += 1.0 / (60.0 + index)
+    results = sorted(
+        fused.values(),
+        key=lambda item: (-float(item["score"]), item.get("lexical_rank", 9999), item.get("vector_rank", 9999)),
+    )
+    for item in results:
+        item["score"] = round(float(item["score"]), 6)
+    return results[:limit]
 
 
 def validate_validation_state(validation_state: str) -> None:

@@ -331,6 +331,9 @@ class EventedLedger:
         self.conn = rebuild_projection(self.db_path, self.event_store)
         self.projection = Ledger(self.conn)
 
+    def rebuild_vectors(self, *, fail_soft: bool = True) -> dict[str, Any]:
+        return self.projection.rebuild_vectors(fail_soft=fail_soft)
+
     def require_record_dict(self, record_id: str) -> dict[str, Any]:
         record = self.projection.get_record(record_id)
         if record is None:

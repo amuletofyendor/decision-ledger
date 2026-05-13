@@ -6,6 +6,8 @@ from pathlib import Path
 
 from decision_ledger.cli import main
 from decision_ledger.db import connect
+from decision_ledger.event_store import EventStore, EventedLedger
+from decision_ledger.vector_search import bounded_embedding_text
 
 
 def run_cli(db_path: Path, *args: str) -> int:
@@ -91,6 +93,84 @@ def test_add_show_and_search(tmp_path: Path, capsys) -> None:
     rebuilt_record = json.loads(capsys.readouterr().out)
     assert rebuilt_record["summary"] == "Persist dynamic clients"
     assert rebuilt_record["validation_state"] == "validated"
+
+
+class FakeEmbedder:
+    provider = "fake"
+    model = "fake-3d"
+    dimensions = 3
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed_one(text) for text in texts]
+
+    def _embed_one(self, text: str) -> list[float]:
+        lowered = text.lower()
+        if "vector" in lowered or "semantic" in lowered:
+            return [0.0, 1.0, 0.0]
+        if "supplier" in lowered:
+            return [0.0, 0.0, 1.0]
+        return [1.0, 0.0, 0.0]
+
+
+def test_vector_search_uses_generated_projection(tmp_path: Path) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+    conn = connect(db_path)
+    ledger = EventedLedger(conn, EventStore(tmp_path), db_path)
+    lexical_only = ledger.add_record(
+        subject="decision-ledger.search.lexical",
+        kind="decision",
+        status="accepted",
+        summary="Keep FTS",
+        body="Use exact full text search for precise lookup.",
+    )
+    vector_record = ledger.add_record(
+        subject="decision-ledger.search.vector",
+        kind="decision",
+        status="accepted",
+        summary="Add semantic lookup",
+        body="Use generated vector embeddings for semantic recall.",
+        tags=["retrieval"],
+        related_subjects=["decision-ledger.search"],
+    )
+
+    result = ledger.vector_search(
+        "semantic memory",
+        limit=2,
+        embedder=FakeEmbedder(),
+        fail_soft=False,
+    )
+
+    assert result["model"] == "fake-3d"
+    assert result["dimensions"] == 3
+    assert [row["id"] for row in result["results"]] == [vector_record, lexical_only]
+
+    event_files = list((tmp_path / "events").rglob("*.jsonl"))
+    assert event_files
+    assert "record_embedding_metadata" not in "\n".join(
+        path.read_text(encoding="utf-8") for path in event_files
+    )
+
+    hybrid = ledger.hybrid_search(
+        "semantic",
+        limit=2,
+        embedder=FakeEmbedder(),
+    )
+    assert hybrid["combined"][0]["id"] == vector_record
+    assert hybrid["combined"][0]["sources"] == ["lexical", "vector"]
+    assert hybrid["lexical"]["available"] is True
+    assert hybrid["vector"]["model"] == "fake-3d"
+
+
+def test_embedding_text_is_bounded_without_changing_canonical_body(monkeypatch) -> None:
+    monkeypatch.setenv("DECISION_LEDGER_VECTOR_MAX_TEXT_CHARS", "220")
+    text = "body: " + ("important detail " * 20)
+
+    bounded = bounded_embedding_text(text)
+
+    assert len(bounded) == 220
+    assert bounded.startswith("body: important")
+    assert "embedding_text_truncated" in bounded
+    assert "original_sha256=" in bounded
 
 
 def test_evidence_association_and_gather(tmp_path: Path, capsys) -> None:

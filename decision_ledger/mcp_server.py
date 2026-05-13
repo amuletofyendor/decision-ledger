@@ -152,9 +152,11 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 "decision_rebuild_projection",
                 "Rebuild SQLite Projection",
                 "Rebuild the generated SQLite projection from canonical namespace JSONL event files. Use after pulling event changes from git or when the projection is missing/stale.",
-                {},
+                {
+                    "skip_vectors": {"type": "boolean", "description": "Skip rebuilding the generated vector projection."},
+                },
             ),
-            lambda _args: rebuild_projection_tool(ledger),
+            lambda args: rebuild_projection_tool(ledger, skip_vectors=bool(args.get("skip_vectors", False))),
         ),
         "decision_add_record": (
             tool_definition(
@@ -324,19 +326,39 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 "Search Decision Records",
                 TOOL_GUIDANCE["decision_search"],
                 {
-                    "query": string_schema("FTS5 full-text query."),
+                    "query": string_schema("Search query. Results combine lexical and vector retrieval when vector search is available."),
                     "limit": {"type": "integer", "description": "Maximum result count."},
                     "include_obsolete": {"type": "boolean", "description": "Include obsolete statuses."},
                     "validation_state": enum_schema(list(VALIDATION_STATES), "Optional validation-state filter."),
                 },
                 required=["query"],
             ),
-            lambda args: [dict(row) for row in ledger.search(
+            lambda args: ledger.hybrid_search(
                 require_str(args, "query"),
                 limit=int(args.get("limit", 20)),
                 include_obsolete=bool(args.get("include_obsolete", False)),
                 validation_state=args.get("validation_state"),
-            )],
+            ),
+        ),
+        "decision_vector_search": (
+            tool_definition(
+                "decision_vector_search",
+                "Vector Search Decision Records",
+                "Semantic vector search over record subject, metadata, tags, related subjects, summary, and body. Uses the generated SQLite vector projection and local Ollama embeddings when available.",
+                {
+                    "query": string_schema("Natural-language semantic search query."),
+                    "limit": {"type": "integer", "description": "Maximum result count."},
+                    "include_obsolete": {"type": "boolean", "description": "Include obsolete statuses."},
+                    "validation_state": enum_schema(list(VALIDATION_STATES), "Optional validation-state filter."),
+                },
+                required=["query"],
+            ),
+            lambda args: ledger.vector_search(
+                require_str(args, "query"),
+                limit=int(args.get("limit", 20)),
+                include_obsolete=bool(args.get("include_obsolete", False)),
+                validation_state=args.get("validation_state"),
+            ),
         ),
         "decision_show_record": (
             tool_definition(
@@ -431,9 +453,15 @@ def tool_result(value: Any) -> JsonObject:
     }
 
 
-def rebuild_projection_tool(ledger: EventedLedger) -> JsonObject:
+def rebuild_projection_tool(ledger: EventedLedger, *, skip_vectors: bool = False) -> JsonObject:
     ledger.rebuild()
-    return {"rebuilt": True, "db_path": str(ledger.db_path), "events_dir": str(ledger.event_store.events_dir)}
+    vector_result = None if skip_vectors else ledger.rebuild_vectors()
+    return {
+        "rebuilt": True,
+        "db_path": str(ledger.db_path),
+        "events_dir": str(ledger.event_store.events_dir),
+        "vectors": vector_result,
+    }
 
 
 def supersede_record_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:

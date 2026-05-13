@@ -8,7 +8,8 @@ loose markdown, but still easy to browse.
 The core idea is:
 
 - Namespace JSONL event files are the canonical store.
-- SQLite is a generated projection for fast query, search, and wiki serving.
+- SQLite is a generated projection for fast query, lexical/vector search, and
+  wiki serving.
 - Records are append-friendly and audit-oriented.
 - Dot-separated subjects provide a stable namespace tree.
 - Evidence links make claims inspectable.
@@ -43,6 +44,13 @@ superseded or withdrawn", not "delete audit history".
   with evidence and associations.
 
 ## CLI Quick Start
+
+Create a local development environment:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -e . pytest
+```
 
 Run the CLI from this repo:
 
@@ -89,6 +97,11 @@ Rebuild the SQLite projection from canonical event files:
 ```bash
 ./bin/decisions rebuild
 ```
+
+`rebuild` also attempts to rebuild the generated vector projection. If Ollama
+or `sqlite-vec` is unavailable, the lexical projection still rebuilds and the
+result reports vector search as unavailable. Use `--skip-vectors` to avoid the
+embedding pass.
 
 Add an idea:
 
@@ -158,6 +171,34 @@ List available topics in the subject tree:
 ./bin/decisions topics connected-ai.auth --direct
 ```
 
+Run semantic vector search over ledger records:
+
+```bash
+./bin/decisions vector-search "local-first retrieval decisions"
+```
+
+Vector search uses the generated SQLite projection, not the canonical JSONL
+event files. The default embedding provider is local Ollama:
+
+```text
+DECISION_LEDGER_OLLAMA_URL=http://127.0.0.1:11434
+DECISION_LEDGER_VECTOR_MODEL=nomic-embed-text:latest
+DECISION_LEDGER_VECTOR_DIMENSIONS=768
+DECISION_LEDGER_VECTOR_MAX_TEXT_CHARS=8000
+```
+
+The embedding text schema is `record_text_v1`, covering subject, kind, status,
+validation state, summary, body, tags, and related subjects. Vector metadata is
+stored with provider, model, dimensions, text schema, and content hash so stale
+rows can be rebuilt. Very large records are capped only for embedding input and
+include a truncation marker with the original text hash; the canonical record
+body remains in the event store and SQLite record projection.
+
+The MCP-facing `decision_search` tool returns one structured hybrid result:
+`combined` fused matches, the raw `lexical` result set, and the raw `vector`
+result set or vector-unavailable status. This avoids requiring agents to make
+separate lexical and vector calls for normal recall.
+
 Supersede a single record:
 
 ```bash
@@ -222,6 +263,7 @@ The MCP server exposes tools for:
 - `decision_supersede_subject_before`
 - `decision_gather`
 - `decision_search`
+- `decision_vector_search`
 - `decision_show_record`
 - `decision_list_records`
 - `decision_list_topics`

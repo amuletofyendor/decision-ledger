@@ -41,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.set_defaults(func=cmd_init)
 
     rebuild = subparsers.add_parser("rebuild", help="Rebuild the SQLite projection from canonical namespace event files")
+    rebuild.add_argument("--skip-vectors", action="store_true", help="Skip rebuilding the generated vector projection")
     rebuild.add_argument("--json", action="store_true")
     rebuild.set_defaults(func=cmd_rebuild)
 
@@ -87,6 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--json", action="store_true")
     search.set_defaults(func=cmd_search)
+
+    vector_search = subparsers.add_parser("vector-search", help="Vector search records with local embeddings")
+    vector_search.add_argument("query")
+    vector_search.add_argument("--all", action="store_true", help="Include obsolete records")
+    vector_search.add_argument("--validation-state", choices=VALIDATION_STATES)
+    vector_search.add_argument("--limit", type=int, default=20)
+    vector_search.add_argument("--json", action="store_true")
+    vector_search.set_defaults(func=cmd_vector_search)
 
     gather = subparsers.add_parser("gather", help="Gather context for a subject prefix")
     gather.add_argument("subject")
@@ -165,10 +174,12 @@ def cmd_init(args: argparse.Namespace, _ledger: EventedLedger, paths: LedgerPath
 
 def cmd_rebuild(args: argparse.Namespace, ledger: EventedLedger, paths: LedgerPaths) -> int:
     ledger.rebuild()
+    vector_result = None if args.skip_vectors else ledger.rebuild_vectors()
     result = {
         "home": str(paths.home),
         "events_dir": str(paths.events_dir),
         "db_path": str(paths.db_path),
+        "vectors": vector_result,
     }
     output(result, args.json, fallback=f"rebuilt sqlite projection: {paths.db_path}")
     return 0
@@ -236,6 +247,17 @@ def cmd_search(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPa
         )
     ]
     output(rows, args.json, fallback=format_rows(rows))
+    return 0
+
+
+def cmd_vector_search(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    result = ledger.vector_search(
+        args.query,
+        include_obsolete=args.all,
+        validation_state=args.validation_state,
+        limit=args.limit,
+    )
+    output(result, args.json, fallback=format_vector_results(result))
     return 0
 
 
@@ -337,6 +359,24 @@ def format_rows(rows: list[dict[str, Any]]) -> str:
     for row in rows:
         summary = f" - {row['summary']}" if row.get("summary") else ""
         lines.append(f"{row['id']} [{row['status']}/{row['kind']}/{row['validation_state']}] {row['subject']}{summary}")
+    return "\n".join(lines)
+
+
+def format_vector_results(result: dict[str, Any]) -> str:
+    if result.get("available") is False:
+        return f"vector search unavailable: {result.get('error', 'unknown error')}"
+    rows = result.get("results") or []
+    if not rows:
+        return "no records"
+    lines = [
+        f"vector search: {result.get('model')} dims={result.get('dimensions')} schema={result.get('text_schema')}"
+    ]
+    for row in rows:
+        summary = f" - {row['summary']}" if row.get("summary") else ""
+        lines.append(
+            f"{row['id']} sim={row['similarity']:.4f} "
+            f"[{row['status']}/{row['kind']}/{row['validation_state']}] {row['subject']}{summary}"
+        )
     return "\n".join(lines)
 
 
