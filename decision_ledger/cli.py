@@ -8,7 +8,7 @@ from typing import Any
 
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
-from .model import RECORD_KINDS, VALIDATION_STATES, json_dumps
+from .model import RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, json_dumps
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -62,7 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_cmd = subparsers.add_parser("list", help="List records")
     list_cmd.add_argument("subject", nargs="?")
-    list_cmd.add_argument("--status")
+    list_cmd.add_argument("--kind", choices=RECORD_KINDS)
+    list_cmd.add_argument("--status", choices=RECORD_STATUSES)
+    list_cmd.add_argument("--exclude-status", action="append", default=[], choices=RECORD_STATUSES)
     list_cmd.add_argument("--validation-state", choices=VALIDATION_STATES)
     list_cmd.add_argument("--all", action="store_true", help="Include obsolete records")
     list_cmd.add_argument("--limit", type=int, default=50)
@@ -247,7 +249,9 @@ def cmd_list(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPath
         dict(row)
         for row in ledger.list_records(
             subject=args.subject,
+            kind=args.kind,
             status=args.status,
+            exclude_status=args.exclude_status,
             validation_state=args.validation_state,
             include_obsolete=args.all,
             limit=args.limit,

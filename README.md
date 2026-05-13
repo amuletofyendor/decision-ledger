@@ -208,6 +208,12 @@ Build a mixed subject view from records and artifacts:
 ./bin/decisions view connected-ai.bubblebrook.demo-artifacts
 ```
 
+List open snags without dropping to SQLite:
+
+```bash
+./bin/decisions list --kind snag --exclude-status resolved --exclude-status superseded
+```
+
 Vector search uses the generated SQLite projection, not the canonical JSONL
 event files. The default embedding provider is local Ollama:
 
@@ -297,6 +303,8 @@ The MCP server exposes tools for:
 - `decision_supersede_subject_before`
 - `decision_gather`
 - `decision_view_subject`
+- `decision_query_records`
+- `decision_create_view`
 - `decision_search`
 - `decision_vector_search`
 - `decision_show_record`

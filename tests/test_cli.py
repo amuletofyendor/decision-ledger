@@ -334,6 +334,43 @@ def test_cli_accepts_snag_kind(tmp_path: Path, capsys) -> None:
     assert record["kind"] == "snag"
 
 
+def test_list_filters_by_kind_and_excluded_status(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    assert run_cli(
+        db_path,
+        "add",
+        "decision-ledger.snags.open",
+        "--kind",
+        "snag",
+        "--summary",
+        "Open snag",
+        "--body",
+        "Still open.",
+        "--json",
+    ) == 0
+    open_id = json.loads(capsys.readouterr().out)["id"]
+    assert run_cli(
+        db_path,
+        "add",
+        "decision-ledger.snags.done",
+        "--kind",
+        "snag",
+        "--status",
+        "resolved",
+        "--summary",
+        "Resolved snag",
+        "--body",
+        "Already done.",
+        "--json",
+    ) == 0
+    capsys.readouterr()
+
+    assert run_cli(db_path, "list", "--kind", "snag", "--exclude-status", "resolved", "--json") == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [row["id"] for row in rows] == [open_id]
+
+
 def test_existing_db_kind_constraint_migrates_for_new_kinds(tmp_path: Path) -> None:
     db_path = tmp_path / "ledger.sqlite"
     raw = sqlite3.connect(db_path)

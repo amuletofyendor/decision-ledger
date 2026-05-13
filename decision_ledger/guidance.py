@@ -34,6 +34,10 @@ Best practices:
 - Use decision_view_subject when the user wants an associated slice of records
   and artifacts from a subject tree. Wiki subject views render these slices as a
   dated synthesis layer with records and embedded artifacts.
+- Use decision_query_records for precise filtered retrieval such as all current
+  snags, records by kind, or records excluding resolved/superseded statuses.
+  Use decision_create_view to materialize a filtered slice as a stored HTML
+  artifact with the query definition retained in the artifact record body.
 - Inline CSS and inline JavaScript are acceptable in saved HTML artifacts for
   this trusted local/team ledger model.
 - Add association notes that explain why records are linked.
@@ -105,6 +109,8 @@ TOOL_GUIDANCE = {
     "decision_supersede_subject_before": "Bulk-supersede current records under a subject prefix before a timestamp. Use for requests like 'forget decisions on X from before 11am'.",
     "decision_gather": "Gather current context for a subject prefix, including namespace records, associated records, and evidence.",
     "decision_view_subject": "Build a dated synthesis view for a subject prefix, containing ledger records and their stored artifacts.",
+    "decision_query_records": "Precisely query records by subject, kind, status/excluded statuses, validation state, tags, date range, and inclusion options. Use when list/search are too blunt.",
+    "decision_create_view": "Materialize a filtered record query as a stored trusted HTML artifact. Use for reviewable slices such as open snags across the ledger.",
     "decision_search": "Combined lexical and vector search over decision records. Use this as the default fuzzy recall tool before adding duplicate thinking.",
     "decision_vector_search": "Semantic vector search over record subject, metadata, tags, related subjects, summary, and body. Use directly only when isolating vector behavior.",
     "decision_show_record": "Show a complete record with tags, evidence, associations, and audit events.",

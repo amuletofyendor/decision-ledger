@@ -53,6 +53,8 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "decision_add_image_artifact" in tool_names
     assert "decision_list_artifacts" in tool_names
     assert "decision_view_subject" in tool_names
+    assert "decision_query_records" in tool_names
+    assert "decision_create_view" in tool_names
     assert "decision_vector_search" in tool_names
     assert "decision_supersede_subject_before" in tool_names
     assert "decision_list_topics" in tool_names
@@ -165,6 +167,28 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
     assert [item["id"] for item in listed_artifacts["result"]] == [artifact["id"]]
     subject_view = tool_call(server, "decision_view_subject", {"subject": "connected-ai.auth"})
     assert artifact["id"] in {entry.get("artifact_id") for entry in subject_view["entries"]}
+
+    queried = tool_call(
+        server,
+        "decision_query_records",
+        {"subject": "connected-ai.auth", "kind": "decision", "include_body": True},
+    )
+    assert [row["id"] for row in queried["result"]] == [new]
+    assert queried["result"][0]["body"] == "New OIDC direction."
+
+    created_view = tool_call(
+        server,
+        "decision_create_view",
+        {
+            "subject": "decision-ledger.test-views",
+            "query_subject": "connected-ai.auth",
+            "kind": "decision",
+            "title": "Auth Decisions View",
+            "visibility": "internal",
+        },
+    )
+    assert created_view["type"] == "html"
+    assert created_view["record_id"].startswith("rec_")
 
     superseded = tool_call(
         server,

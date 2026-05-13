@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Any
 
-from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, RECORD_KINDS, VALIDATION_STATES, new_id, now_iso, parse_datetime
+from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, new_id, now_iso, parse_datetime
 from .vector_search import (
     Embedder,
     rebuild_record_vectors,
@@ -275,39 +275,126 @@ class Ledger:
         self,
         *,
         subject: str | None = None,
+        kind: str | None = None,
         status: str | None = None,
+        exclude_status: list[str] | None = None,
         validation_state: str | None = None,
         include_obsolete: bool = False,
         limit: int = 50,
     ) -> list[sqlite3.Row]:
+        return [
+            row
+            for row in self.query_records(
+                subject=subject,
+                kind=kind,
+                status=[status] if status else None,
+                exclude_status=exclude_status,
+                validation_state=validation_state,
+                include_obsolete=include_obsolete,
+                limit=limit,
+                include_body=False,
+                include_evidence=False,
+                include_artifacts=False,
+                as_rows=True,
+            )
+        ]
+
+    def query_records(
+        self,
+        *,
+        subject: str | None = None,
+        kind: str | None = None,
+        status: list[str] | None = None,
+        exclude_status: list[str] | None = None,
+        validation_state: str | None = None,
+        tags: list[str] | None = None,
+        created_from: str | None = None,
+        created_to: str | None = None,
+        include_obsolete: bool = False,
+        include_body: bool = False,
+        include_evidence: bool = False,
+        include_artifacts: bool = False,
+        limit: int = 50,
+        sort: str = "created_desc",
+        as_rows: bool = False,
+    ) -> list[dict[str, Any]] | list[sqlite3.Row]:
         clauses: list[str] = []
         params: list[Any] = []
         if subject:
             clauses.append("(subject = ? OR subject LIKE ?)")
             params.extend([subject, f"{subject}.%"])
+        if kind:
+            validate_record_kind(kind)
+            clauses.append("kind = ?")
+            params.append(kind)
         if status:
-            clauses.append("status = ?")
-            params.append(status)
+            for item in status:
+                validate_record_status(item)
+            placeholders = ",".join("?" for _ in status)
+            clauses.append(f"status IN ({placeholders})")
+            params.extend(status)
         elif not include_obsolete:
             placeholders = ",".join("?" for _ in CURRENT_STATUSES)
             clauses.append(f"status IN ({placeholders})")
             params.extend(CURRENT_STATUSES)
+        if exclude_status:
+            for item in exclude_status:
+                validate_record_status(item)
+            placeholders = ",".join("?" for _ in exclude_status)
+            clauses.append(f"status NOT IN ({placeholders})")
+            params.extend(exclude_status)
         if validation_state:
             validate_validation_state(validation_state)
             clauses.append("validation_state = ?")
             params.append(validation_state)
+        for tag in tags or []:
+            clauses.append("EXISTS (SELECT 1 FROM record_tags rt WHERE rt.record_id = records.id AND rt.tag = ?)")
+            params.append(tag)
+        if created_from:
+            clauses.append("created_at >= ?")
+            params.append(parse_datetime(created_from))
+        if created_to:
+            clauses.append("created_at <= ?")
+            params.append(parse_datetime(created_to))
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order_by = {
+            "created_asc": "created_at ASC, id ASC",
+            "created_desc": "created_at DESC, id DESC",
+            "subject": "subject ASC, created_at DESC, id DESC",
+        }.get(sort)
+        if order_by is None:
+            raise ValueError("sort must be created_desc, created_asc, or subject")
         params.append(limit)
-        return self.conn.execute(
+        body_column = ", body" if include_body else ""
+        rows = self.conn.execute(
             f"""
-            SELECT id, subject, kind, status, validation_state, summary, created_at
+            SELECT id, subject, kind, status, validation_state, summary, created_at, created_by{body_column}
             FROM records
             {where}
-            ORDER BY created_at DESC
+            ORDER BY {order_by}
             LIMIT ?
             """,
             params,
         ).fetchall()
+        if as_rows:
+            return rows
+        records = [dict(row) for row in rows]
+        if include_evidence or include_artifacts:
+            record_ids = [record["id"] for record in records]
+            evidence_by_record: dict[str, list[dict[str, Any]]] = {record_id: [] for record_id in record_ids}
+            artifact_by_record: dict[str, list[dict[str, Any]]] = {record_id: [] for record_id in record_ids}
+            if include_evidence:
+                for evidence in self.evidence_for_records(record_ids):
+                    evidence_by_record[evidence["record_id"]].append(dict(evidence))
+            if include_artifacts:
+                for artifact in self.artifacts_for_records(record_ids):
+                    artifact_by_record[artifact["record_id"]].append(dict(artifact))
+            for record in records:
+                if include_evidence:
+                    record["evidence"] = evidence_by_record[record["id"]]
+                if include_artifacts:
+                    record["artifacts"] = artifact_by_record[record["id"]]
+        return records
 
     def list_topics(
         self,
@@ -856,3 +943,9 @@ def validate_record_kind(kind: str) -> None:
     if kind not in RECORD_KINDS:
         allowed = ", ".join(RECORD_KINDS)
         raise ValueError(f"unknown record kind: {kind}; expected one of {allowed}")
+
+
+def validate_record_status(status: str) -> None:
+    if status not in RECORD_STATUSES:
+        allowed = ", ".join(RECORD_STATUSES)
+        raise ValueError(f"unknown record status: {status}; expected one of {allowed}")

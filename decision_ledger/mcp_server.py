@@ -5,6 +5,7 @@ import base64
 import json
 import sys
 import traceback
+from html import escape
 from pathlib import Path
 from typing import Any, Callable
 
@@ -12,7 +13,7 @@ from . import __version__
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .guidance import CAPTURE_PROMPT, SERVER_INSTRUCTIONS, TOOL_GUIDANCE
-from .model import RECORD_KINDS, VALIDATION_STATES, json_dumps
+from .model import RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, json_dumps
 
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -417,6 +418,32 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 limit=int(args.get("limit", 200)),
             ),
         ),
+        "decision_query_records": (
+            tool_definition(
+                "decision_query_records",
+                "Query Decision Records",
+                TOOL_GUIDANCE["decision_query_records"],
+                query_record_schema(),
+            ),
+            lambda args: ledger.query_records(**query_record_args(args)),
+        ),
+        "decision_create_view": (
+            tool_definition(
+                "decision_create_view",
+                "Create Filtered HTML View",
+                TOOL_GUIDANCE["decision_create_view"],
+                {
+                    **query_record_schema(),
+                    "subject": string_schema("Subject for the stored view artifact. Also used as a subject filter unless query_subject is provided."),
+                    "query_subject": string_schema("Optional subject prefix filter. Use this when the stored view subject differs from the query subject."),
+                    "title": string_schema("View title."),
+                    "created_by": string_schema("Human or agent creating the view."),
+                    "visibility": enum_schema(["private", "internal", "shareable", "public"], "Export visibility."),
+                },
+                required=["subject"],
+            ),
+            lambda args: create_view_tool(ledger, args),
+        ),
         "decision_search": (
             tool_definition(
                 "decision_search",
@@ -474,7 +501,9 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 TOOL_GUIDANCE["decision_list_records"],
                 {
                     "subject": string_schema("Optional subject prefix."),
-                    "status": string_schema("Optional exact status filter."),
+                    "kind": enum_schema(list(RECORD_KINDS), "Optional record kind filter."),
+                    "status": enum_schema(list(RECORD_STATUSES), "Optional exact status filter."),
+                    "exclude_status": array_schema("Statuses to exclude."),
                     "validation_state": enum_schema(list(VALIDATION_STATES), "Optional validation-state filter."),
                     "include_obsolete": {"type": "boolean", "description": "Include obsolete statuses."},
                     "limit": {"type": "integer", "description": "Maximum result count."},
@@ -482,7 +511,9 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
             ),
             lambda args: [dict(row) for row in ledger.list_records(
                 subject=args.get("subject"),
+                kind=args.get("kind"),
                 status=args.get("status"),
+                exclude_status=list_arg(args, "exclude_status"),
                 validation_state=args.get("validation_state"),
                 include_obsolete=bool(args.get("include_obsolete", False)),
                 limit=int(args.get("limit", 50)),
@@ -539,6 +570,48 @@ def enum_schema(values: list[str], description: str) -> JsonObject:
 
 def array_schema(description: str) -> JsonObject:
     return {"type": "array", "items": {"type": "string"}, "description": description}
+
+
+def enum_array_schema(values: list[str], description: str) -> JsonObject:
+    return {"type": "array", "items": {"type": "string", "enum": values}, "description": description}
+
+
+def query_record_schema() -> JsonObject:
+    return {
+        "subject": string_schema("Optional subject prefix filter."),
+        "kind": enum_schema(list(RECORD_KINDS), "Optional record kind filter."),
+        "status": enum_array_schema(list(RECORD_STATUSES), "Optional statuses to include."),
+        "exclude_status": enum_array_schema(list(RECORD_STATUSES), "Statuses to exclude."),
+        "validation_state": enum_schema(list(VALIDATION_STATES), "Optional validation-state filter."),
+        "tags": array_schema("Tags that must all be present."),
+        "created_from": string_schema("Optional lower created_at bound."),
+        "created_to": string_schema("Optional upper created_at bound."),
+        "include_obsolete": {"type": "boolean", "description": "Include obsolete statuses unless status is explicitly supplied."},
+        "include_body": {"type": "boolean", "description": "Include record body text."},
+        "include_evidence": {"type": "boolean", "description": "Include evidence arrays."},
+        "include_artifacts": {"type": "boolean", "description": "Include artifact arrays."},
+        "limit": {"type": "integer", "description": "Maximum result count."},
+        "sort": enum_schema(["created_desc", "created_asc", "subject"], "Sort order."),
+    }
+
+
+def query_record_args(args: JsonObject) -> JsonObject:
+    return {
+        "subject": args.get("query_subject") or args.get("subject"),
+        "kind": args.get("kind"),
+        "status": list_arg(args, "status"),
+        "exclude_status": list_arg(args, "exclude_status"),
+        "validation_state": args.get("validation_state"),
+        "tags": list_arg(args, "tags"),
+        "created_from": args.get("created_from"),
+        "created_to": args.get("created_to"),
+        "include_obsolete": bool(args.get("include_obsolete", False)),
+        "include_body": bool(args.get("include_body", False)),
+        "include_evidence": bool(args.get("include_evidence", False)),
+        "include_artifacts": bool(args.get("include_artifacts", False)),
+        "limit": int(args.get("limit", 50)),
+        "sort": args.get("sort", "created_desc"),
+    }
 
 
 def tool_result(value: Any) -> JsonObject:
@@ -618,6 +691,87 @@ def add_image_artifact_tool(ledger: EventedLedger, args: JsonObject) -> JsonObje
         created_by=args.get("created_by"),
         export_visibility=args.get("visibility", "private"),
     )
+
+
+def create_view_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
+    subject = require_str(args, "subject")
+    query_args = query_record_args(args)
+    query_args["subject"] = args.get("query_subject") or args.get("subject")
+    if "include_body" not in args:
+        query_args["include_body"] = True
+    if "include_evidence" not in args:
+        query_args["include_evidence"] = True
+    if "include_artifacts" not in args:
+        query_args["include_artifacts"] = True
+    records = ledger.query_records(**query_args)
+    title = args.get("title") or f"Decision Ledger View: {query_args.get('subject') or 'all subjects'}"
+    html = render_query_view_html(title, records, query_args)
+    body = "Generated Decision Ledger view.\n\nQuery:\n" + json.dumps(query_args, indent=2, sort_keys=True)
+    return ledger.add_artifact(
+        subject=subject,
+        artifact_type="html",
+        content=html.encode("utf-8"),
+        extension=".html",
+        content_type="text/html; charset=utf-8",
+        label=title,
+        summary=title,
+        body=body,
+        tags=["view", "html"],
+        related_subjects=[query_args["subject"]] if query_args.get("subject") and query_args["subject"] != subject else [],
+        created_by=args.get("created_by"),
+        export_visibility=args.get("visibility", "private"),
+    )
+
+
+def render_query_view_html(title: str, records: list[dict[str, Any]], query_args: JsonObject) -> str:
+    body = [
+        "<!doctype html>",
+        "<html lang=\"en\">",
+        "<head>",
+        "<meta charset=\"utf-8\">",
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        f"<title>{html_escape(title)}</title>",
+        "<style>",
+        "body{font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:24px;color:#202124;background:#f7f7f4}",
+        "main{max-width:1120px;margin:0 auto}.record{background:#fff;border:1px solid #d8d7d0;border-radius:6px;padding:14px;margin:12px 0}",
+        ".meta{color:#5f6368}.badge{display:inline-block;border:1px solid #d8d7d0;border-radius:999px;padding:1px 8px;font-size:12px;margin-right:4px;color:#5f6368}",
+        "pre{white-space:pre-wrap;background:#efeee8;border:1px solid #d8d7d0;border-radius:6px;padding:12px;overflow:auto}",
+        "a{color:#226f68;text-decoration:none}a:hover{text-decoration:underline}",
+        "</style>",
+        "</head>",
+        "<body><main>",
+        f"<h1>{html_escape(title)}</h1>",
+        f"<p class=\"meta\">Records: {len(records)}</p>",
+        f"<pre>{html_escape(json.dumps(query_args, indent=2, sort_keys=True))}</pre>",
+    ]
+    for record in records:
+        body.extend(
+            [
+                "<section class=\"record\">",
+                f"<div><span class=\"badge\">{html_escape(record['kind'])}</span><span class=\"badge\">{html_escape(record['status'])}</span><span class=\"badge\">{html_escape(record['validation_state'])}</span></div>",
+                f"<h2>{html_escape(record.get('summary') or record['id'])}</h2>",
+                f"<p class=\"meta\">{html_escape(record['subject'])} · {html_escape(record['created_at'])} · {html_escape(record['id'])}</p>",
+            ]
+        )
+        if record.get("body"):
+            body.append(f"<pre>{html_escape(record['body'])}</pre>")
+        if record.get("evidence"):
+            body.append("<h3>Evidence</h3><ul>")
+            for item in record["evidence"]:
+                body.append(f"<li>{html_escape(item['type'])}: {html_escape(item['uri'])}</li>")
+            body.append("</ul>")
+        if record.get("artifacts"):
+            body.append("<h3>Artifacts</h3><ul>")
+            for item in record["artifacts"]:
+                body.append(f"<li>{html_escape(item['type'])}: {html_escape(item.get('label') or item['id'])}</li>")
+            body.append("</ul>")
+        body.append("</section>")
+    body.extend(["</main></body>", "</html>", ""])
+    return "\n".join(body)
+
+
+def html_escape(value: Any) -> str:
+    return escape("" if value is None else str(value), quote=True)
 
 
 def require_record_result(ledger: EventedLedger, record_id: str) -> JsonObject:
