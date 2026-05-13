@@ -74,6 +74,8 @@ Gather the current context for subject Y before we change anything.
 Import the decisions and snags from this markdown plan into the ledger.
 Mark decisions under subject X from before 11am as superseded by this new record.
 Store this HTML page or screenshot as an artifact under subject Z.
+Store this pseudocode as a focused artifact and associate it with requirement X.
+Show coverage gaps under subject Y.
 Save a reusable view of all open snags and make it appear in the wiki.
 Serve the top-level wiki for me on a free localhost port.
 ```
@@ -81,7 +83,8 @@ Serve the top-level wiki for me on a free localhost port.
 ## Capabilities
 
 - Capture durable records: thoughts, ideas, snags, decisions, assumptions,
-  questions, findings, plans, and notes.
+  questions, findings, plans, notes, requirements, constraints, test cases, UI
+  notes, and interface contracts.
 - Organize records in a dot-separated subject tree, so an agent can gather
   context for one namespace or browse all top-level topics.
 - Preserve audit history through append-only JSONL events, while using SQLite
@@ -97,8 +100,14 @@ Serve the top-level wiki for me on a free localhost port.
   the subject tree alone.
 - Search with lexical and optional local vector retrieval, exposed as one
   hybrid result for agent use.
-- Store ancillary HTML and image artifacts, such as generated explanations,
-  diagrams, screenshots, and small local visualizations.
+- Store ancillary artifacts, such as generated HTML explanations, diagrams,
+  screenshots, focused snippets, pseudocode, markdown, JSON, YAML, and plain
+  text.
+- Associate artifacts with records when they verify, constrain, illustrate,
+  support, or clarify durable intent.
+- Report simple coverage gaps, such as requirements without test cases,
+  accepted decisions without evidence, UI notes without artifacts, and
+  artifacts without explicit associations.
 - Save reusable view definitions and render them live in the wiki from current
   ledger data.
 - Serve a live local wiki for browsing subjects, records, evidence,
@@ -235,7 +244,11 @@ supersede the idea record if that history will matter later.
 Use `kind=snag` for known issues, rough edges, cleanup items, and snag-list
 entries that should be retrievable alongside the rest of the audit trail.
 
-Store a self-contained HTML artifact or image artifact:
+Use `kind=requirement`, `kind=constraint`, `kind=test_case`, `kind=ui_note`, and
+`kind=interface_contract` when software-project intent benefits from more
+specific structure while still remaining a normal ledger record.
+
+Store a self-contained HTML artifact, image artifact, or focused text artifact:
 
 ```bash
 ./bin/decisions artifact add-html product.demos.sample \
@@ -247,6 +260,12 @@ Store a self-contained HTML artifact or image artifact:
   --file ~/Downloads/sample-overview.png \
   --summary "Sample overview diagram" \
   --visibility internal
+
+./bin/decisions artifact add-text product.checkout.requirements.payment \
+  --type pseudocode \
+  --content "if payment.valid then enable(confirmButton)" \
+  --summary "Payment button pseudocode" \
+  --visibility internal
 ```
 
 Artifacts are copied into `.decision-ledger/artifacts/...` and indexed through
@@ -255,6 +274,18 @@ inline JavaScript are allowed. The live wiki serves artifacts at
 `/artifacts/<artifact_id>/content` and links them from the artifact record page.
 HTML artifacts are not the persistence mechanism for views; they are ancillary
 free-form material attached to ledger subjects or records.
+
+Text/code-like artifacts are for focused snippets, pseudocode, markdown, JSON,
+YAML, or plain text when those forms express intent better than prose. They are
+not for ingesting full source trees or replacing the filesystem.
+
+Associate a record with an artifact:
+
+```bash
+./bin/decisions artifact associate rec_... art_... \
+  --relation illustrates \
+  --note "This pseudocode illustrates the payment validation requirement"
+```
 
 The live wiki also serves dated subject views at
 `/views/subjects/<subject/path>/index.html`, mixing records with embedded HTML
@@ -335,6 +366,12 @@ List open snags without dropping to SQLite:
 
 ```bash
 ./bin/decisions list --kind snag --exclude-status resolved --exclude-status superseded
+```
+
+Report simple coverage and consistency gaps:
+
+```bash
+./bin/decisions coverage product.checkout
 ```
 
 Vector search uses the generated SQLite projection, not the canonical JSONL
@@ -419,14 +456,17 @@ The MCP server exposes tools for:
 - `decision_add_evidence`
 - `decision_add_html_artifact`
 - `decision_add_image_artifact`
+- `decision_add_text_artifact`
 - `decision_list_artifacts`
 - `decision_validate_record`
 - `decision_associate_records`
+- `decision_associate_artifact`
 - `decision_supersede_record`
 - `decision_supersede_subject_before`
 - `decision_gather`
 - `decision_view_subject`
 - `decision_query_records`
+- `decision_coverage_report`
 - `decision_create_view`
 - `decision_save_view`
 - `decision_list_views`
@@ -454,6 +494,12 @@ The MCP surface deliberately bakes in usage guidance:
 - supersede or withdraw records instead of deleting them for normal forgetting
 - attach evidence for audit-worthy claims
 - associate records across namespaces when subject prefix alone is insufficient
+- use focused artifacts for snippets and pseudocode when they express intent
+  better than prose, without ingesting whole codebases
+- associate artifacts to the records they verify, constrain, illustrate,
+  support, or clarify
+- use coverage reports to find missing tests, evidence, UI artifacts, or
+  artifact associations
 - preserve detail rather than shrinking source material, but split multi-decision
   material into linked records when parts need independent subjects, tags,
   evidence, statuses, or supersession paths
@@ -463,6 +509,8 @@ The MCP surface deliberately bakes in usage guidance:
 - start `decision-wiki-server` for browsable wiki views
 - use `decision_save_view` for reusable saved views; do not store rendered view
   HTML as an HTML artifact
+- stay implementation-process agnostic; do not use the ledger to drive builds,
+  orchestrate variants, or replace Git/build tooling
 
 The implementation follows the MCP stdio shape: newline-delimited JSON-RPC on
 stdin/stdout, no stdout logging, `initialize`, `tools/list`, `tools/call`,

@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Any
 
-from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, new_id, now_iso, parse_datetime
+from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, CURRENT_STATUSES, OBSOLETE_STATUSES, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, new_id, now_iso, parse_datetime
 from .vector_search import (
     Embedder,
     rebuild_record_vectors,
@@ -175,6 +175,7 @@ class Ledger:
     ) -> str:
         self.require_record(from_record_id)
         self.require_record(to_record_id)
+        validate_association_relation(relation)
         association_id = new_id("asc")
         created_at = now_iso()
         with self.conn:
@@ -204,6 +205,52 @@ class Ledger:
                 created_by,
                 note=note,
                 payload={"to_record_id": to_record_id, "relation": relation},
+            )
+        return association_id
+
+    def associate_artifact(
+        self,
+        *,
+        record_id: str,
+        artifact_id: str,
+        relation: str,
+        note: str | None = None,
+        strength: float | None = None,
+        source: str = "manual",
+        created_by: str | None = None,
+    ) -> str:
+        self.require_record(record_id)
+        self.require_artifact(artifact_id)
+        validate_artifact_association_relation(relation)
+        association_id = new_id("asc")
+        created_at = now_iso()
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO record_artifact_associations (
+                  id, record_id, artifact_id, relation, strength, note,
+                  source, created_at, created_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    association_id,
+                    record_id,
+                    artifact_id,
+                    relation,
+                    strength,
+                    note,
+                    source,
+                    created_at,
+                    created_by,
+                ),
+            )
+            self.add_event(
+                record_id,
+                "artifact_associated",
+                created_by,
+                note=note,
+                payload={"artifact_id": artifact_id, "relation": relation},
             )
         return association_id
 
@@ -676,6 +723,7 @@ class Ledger:
             ],
             "evidence": [dict(item) for item in self.evidence_for_records([record_id])],
             "artifacts": [dict(item) for item in self.artifacts_for_records([record_id])],
+            "artifact_associations": [dict(item) for item in self.artifact_associations_for_records([record_id])],
             "associations_out": [
                 dict(item)
                 for item in self.conn.execute(
@@ -718,6 +766,10 @@ class Ledger:
         if not self.conn.execute("SELECT 1 FROM records WHERE id = ?", (record_id,)).fetchone():
             raise ValueError(f"record not found: {record_id}")
 
+    def require_artifact(self, artifact_id: str) -> None:
+        if not self.conn.execute("SELECT 1 FROM artifacts WHERE id = ?", (artifact_id,)).fetchone():
+            raise ValueError(f"artifact not found: {artifact_id}")
+
     def evidence_for_records(self, record_ids: list[str]) -> list[sqlite3.Row]:
         if not record_ids:
             return []
@@ -743,6 +795,24 @@ class Ledger:
             FROM artifacts
             WHERE record_id IN ({placeholders})
             ORDER BY created_at, id
+            """,
+            record_ids,
+        ).fetchall()
+
+    def artifact_associations_for_records(self, record_ids: list[str]) -> list[sqlite3.Row]:
+        if not record_ids:
+            return []
+        placeholders = ",".join("?" for _ in record_ids)
+        return self.conn.execute(
+            f"""
+            SELECT raa.id, raa.record_id, raa.artifact_id, raa.relation, raa.strength,
+                   raa.note, raa.source, raa.created_at, raa.created_by,
+                   a.subject AS artifact_subject, a.type AS artifact_type,
+                   a.content_type, a.label, a.summary
+            FROM record_artifact_associations raa
+            JOIN artifacts a ON a.id = raa.artifact_id
+            WHERE raa.record_id IN ({placeholders})
+            ORDER BY raa.created_at, raa.id
             """,
             record_ids,
         ).fetchall()
@@ -797,7 +867,122 @@ class Ledger:
             """,
             (artifact_id,),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        item = dict(row)
+        item["record_associations"] = [
+            dict(association)
+            for association in self.conn.execute(
+                """
+                SELECT raa.id, raa.record_id, raa.artifact_id, raa.relation, raa.strength,
+                       raa.note, raa.source, raa.created_at, raa.created_by,
+                       r.subject AS record_subject, r.kind AS record_kind, r.summary AS record_summary
+                FROM record_artifact_associations raa
+                JOIN records r ON r.id = raa.record_id
+                WHERE raa.artifact_id = ?
+                ORDER BY raa.created_at, raa.id
+                """,
+                (artifact_id,),
+            )
+        ]
+        return item
+
+    def coverage_report(
+        self,
+        *,
+        subject: str | None = None,
+        include_obsolete: bool = False,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        subject_clause = ""
+        subject_params: list[Any] = []
+        if subject:
+            subject_clause = "AND (r.subject = ? OR r.subject LIKE ?)"
+            subject_params.extend([subject, f"{subject}.%"])
+        status_clause = ""
+        status_params: list[Any] = []
+        if not include_obsolete:
+            placeholders = ",".join("?" for _ in CURRENT_STATUSES)
+            status_clause = f"AND r.status IN ({placeholders})"
+            status_params.extend(CURRENT_STATUSES)
+        params = [*subject_params, *status_params, limit]
+        requirements_without_test_cases = self.conn.execute(
+            f"""
+            SELECT r.id, r.subject, r.kind, r.status, r.validation_state, r.summary, r.created_at
+            FROM records r
+            WHERE r.kind = 'requirement'
+            {subject_clause}
+            {status_clause}
+              AND NOT EXISTS (
+                SELECT 1
+                FROM record_associations a
+                JOIN records t ON t.id = a.from_record_id
+                WHERE a.to_record_id = r.id
+                  AND a.relation = 'verifies'
+                  AND t.kind = 'test_case'
+                  AND t.status IN ('active', 'proposed', 'accepted', 'resolved')
+              )
+            ORDER BY r.created_at DESC, r.id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        accepted_decisions_without_evidence = self.conn.execute(
+            f"""
+            SELECT r.id, r.subject, r.kind, r.status, r.validation_state, r.summary, r.created_at
+            FROM records r
+            WHERE r.kind = 'decision'
+              AND r.status = 'accepted'
+            {subject_clause}
+              AND NOT EXISTS (SELECT 1 FROM evidence e WHERE e.record_id = r.id)
+            ORDER BY r.created_at DESC, r.id DESC
+            LIMIT ?
+            """,
+            [*subject_params, limit],
+        ).fetchall()
+        ui_notes_without_artifacts = self.conn.execute(
+            f"""
+            SELECT r.id, r.subject, r.kind, r.status, r.validation_state, r.summary, r.created_at
+            FROM records r
+            WHERE r.kind = 'ui_note'
+            {subject_clause}
+            {status_clause}
+              AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.record_id = r.id)
+              AND NOT EXISTS (SELECT 1 FROM record_artifact_associations raa WHERE raa.record_id = r.id)
+            ORDER BY r.created_at DESC, r.id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        artifact_subject_clause = ""
+        artifact_subject_params: list[Any] = []
+        if subject:
+            artifact_subject_clause = "AND (a.subject = ? OR a.subject LIKE ?)"
+            artifact_subject_params.extend([subject, f"{subject}.%"])
+        artifacts_without_associations = self.conn.execute(
+            f"""
+            SELECT a.id, a.record_id, a.subject, a.type, a.content_type, a.label, a.summary,
+                   a.created_at, a.export_visibility
+            FROM artifacts a
+            JOIN records r ON r.id = a.record_id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM record_artifact_associations raa WHERE raa.artifact_id = a.id
+            )
+            {artifact_subject_clause}
+            {status_clause}
+            ORDER BY a.created_at DESC, a.id DESC
+            LIMIT ?
+            """,
+            [*artifact_subject_params, *status_params, limit],
+        ).fetchall()
+        return {
+            "subject": subject,
+            "include_obsolete": include_obsolete,
+            "requirements_without_test_cases": [dict(row) for row in requirements_without_test_cases],
+            "accepted_decisions_without_evidence": [dict(row) for row in accepted_decisions_without_evidence],
+            "ui_notes_without_artifacts": [dict(row) for row in ui_notes_without_artifacts],
+            "artifacts_without_associations": [dict(row) for row in artifacts_without_associations],
+        }
 
     def associated_records(self, record_ids: list[str], *, include_obsolete: bool = False) -> list[sqlite3.Row]:
         if not record_ids:
@@ -985,6 +1170,24 @@ def validate_record_status(status: str) -> None:
     if status not in RECORD_STATUSES:
         allowed = ", ".join(RECORD_STATUSES)
         raise ValueError(f"unknown record status: {status}; expected one of {allowed}")
+
+
+def validate_artifact_type(artifact_type: str) -> None:
+    if artifact_type not in ARTIFACT_TYPES:
+        allowed = ", ".join(ARTIFACT_TYPES)
+        raise ValueError(f"unknown artifact type: {artifact_type}; expected one of {allowed}")
+
+
+def validate_association_relation(relation: str) -> None:
+    if relation not in ASSOCIATION_RELATIONS:
+        allowed = ", ".join(ASSOCIATION_RELATIONS)
+        raise ValueError(f"unknown association relation: {relation}; expected one of {allowed}")
+
+
+def validate_artifact_association_relation(relation: str) -> None:
+    if relation == "supersedes":
+        raise ValueError("artifact associations cannot use supersedes")
+    validate_association_relation(relation)
 
 
 def saved_view_from_row(row: sqlite3.Row) -> dict[str, Any]:

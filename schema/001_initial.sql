@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS records (
   id TEXT PRIMARY KEY,
   subject TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (
-    kind IN ('thought', 'idea', 'snag', 'decision', 'assumption', 'question', 'finding', 'plan', 'note')
+    kind IN ('thought', 'idea', 'snag', 'decision', 'assumption', 'question', 'finding', 'plan', 'note', 'requirement', 'constraint', 'test_case', 'ui_note', 'interface_contract')
   ),
   status TEXT NOT NULL CHECK (
     status IN ('active', 'proposed', 'accepted', 'rejected', 'superseded', 'withdrawn', 'resolved', 'archived')
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
   record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
   subject TEXT NOT NULL,
   type TEXT NOT NULL CHECK (
-    type IN ('html', 'image')
+    type IN ('html', 'image', 'snippet', 'pseudocode', 'markdown', 'json', 'yaml', 'text')
   ),
   content_type TEXT NOT NULL,
   storage_path TEXT NOT NULL UNIQUE,
@@ -102,6 +102,42 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_record_id ON artifacts(record_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_subject ON artifacts(subject);
 CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type);
 CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
+
+CREATE TABLE IF NOT EXISTS record_artifact_associations (
+  id TEXT PRIMARY KEY,
+  record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  relation TEXT NOT NULL CHECK (
+    relation IN (
+      'associated_with',
+      'supports',
+      'contradicts',
+      'depends_on',
+      'derived_from',
+      'duplicates',
+      'clarifies',
+      'blocks',
+      'implements',
+      'raises_question',
+      'answers_question',
+      'verifies',
+      'constrains',
+      'illustrates'
+    )
+  ),
+  strength REAL,
+  note TEXT,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (
+    source IN ('manual', 'agent', 'import', 'inferred')
+  ),
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  UNIQUE (record_id, artifact_id, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_record_artifact_associations_record ON record_artifact_associations(record_id);
+CREATE INDEX IF NOT EXISTS idx_record_artifact_associations_artifact ON record_artifact_associations(artifact_id);
+CREATE INDEX IF NOT EXISTS idx_record_artifact_associations_relation ON record_artifact_associations(relation);
 
 CREATE TABLE IF NOT EXISTS saved_views (
   id TEXT PRIMARY KEY,
@@ -136,7 +172,10 @@ CREATE TABLE IF NOT EXISTS record_associations (
       'blocks',
       'implements',
       'raises_question',
-      'answers_question'
+      'answers_question',
+      'verifies',
+      'constrains',
+      'illustrates'
     )
   ),
   strength REAL,
@@ -166,6 +205,7 @@ CREATE TABLE IF NOT EXISTS record_events (
       'associated',
       'evidence_added',
       'artifact_added',
+      'artifact_associated',
       'validation_changed',
       'tag_added',
       'export_visibility_changed'

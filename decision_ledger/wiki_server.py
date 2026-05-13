@@ -454,6 +454,7 @@ def render_record_page(record: dict[str, Any], visible_record_ids: set[str]) -> 
             body.append(f"<li>{h(item['relation'])}: {h(item['subject'])}</li>")
         body.append("</ul>")
     body.extend(["<h2>Artifacts</h2>", render_artifacts(record.get("artifacts", []))])
+    body.extend(["<h2>Artifact Associations</h2>", render_artifact_associations(record.get("artifact_associations", []))])
     body.extend(["<h2>Evidence</h2>", render_evidence(record["evidence"])])
     body.extend(["<h2>Associations Out</h2>", render_associations(record["associations_out"], visible_record_ids, "->")])
     body.extend(["<h2>Associations In</h2>", render_associations(record["associations_in"], visible_record_ids, "<-")])
@@ -519,6 +520,21 @@ def render_associations(items: list[dict[str, Any]], visible_record_ids: set[str
             target = f"<code>{h(record_id)}</code>"
         note = f"<div class=\"meta\">{h(item['note'])}</div>" if item.get("note") else ""
         body.append(f"<li>{badge(item['relation'])} {h(arrow)} {target}{note}</li>")
+    body.append("</ul>")
+    return "\n".join(body)
+
+
+def render_artifact_associations(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "<p class=\"empty\">none</p>"
+    body = ["<ul class=\"clean\">"]
+    for item in items:
+        title = item.get("label") or item.get("summary") or item["artifact_id"]
+        note = f"<div class=\"meta\">{h(item['note'])}</div>" if item.get("note") else ""
+        body.append(
+            f"<li>{badge(item['relation'])} - <a href=\"{h(artifact_url(item['artifact_id']))}\">{h(title)}</a> "
+            f"{badge(item['artifact_type'])}{note}</li>"
+        )
     body.append("</ul>")
     return "\n".join(body)
 

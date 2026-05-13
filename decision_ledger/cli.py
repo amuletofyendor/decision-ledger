@@ -8,7 +8,7 @@ from typing import Any
 
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
-from .model import RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, json_dumps
+from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, json_dumps
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -112,6 +112,13 @@ def build_parser() -> argparse.ArgumentParser:
     view.add_argument("--json", action="store_true")
     view.set_defaults(func=cmd_view)
 
+    coverage = subparsers.add_parser("coverage", help="Report simple coverage and consistency gaps")
+    coverage.add_argument("subject", nargs="?")
+    coverage.add_argument("--all", action="store_true", help="Include obsolete records")
+    coverage.add_argument("--limit", type=int, default=100)
+    coverage.add_argument("--json", action="store_true")
+    coverage.set_defaults(func=cmd_coverage)
+
     evidence = subparsers.add_parser("evidence", help="Manage evidence")
     evidence_sub = evidence.add_subparsers(dest="evidence_command", required=True)
     evidence_add = evidence_sub.add_parser("add", help="Attach evidence to a record")
@@ -136,9 +143,37 @@ def build_parser() -> argparse.ArgumentParser:
     add_artifact_arguments(artifact_image)
     artifact_image.add_argument("--content-type", help="Override detected image content type")
     artifact_image.set_defaults(func=cmd_artifact_add_image)
+    artifact_text = artifact_sub.add_parser("add-text", help="Store a focused text/code-like artifact")
+    artifact_text.add_argument("subject")
+    artifact_text.add_argument("--type", required=True, choices=[item for item in ARTIFACT_TYPES if item not in {"html", "image"}])
+    artifact_text.add_argument("--file", help="Artifact file to copy into the ledger")
+    artifact_text.add_argument("--content", help="Inline artifact content")
+    artifact_text.add_argument("--extension", help="Storage extension, for example .md or .py")
+    artifact_text.add_argument("--content-type", help="Override detected content type")
+    artifact_text.add_argument("--record-id", help="Attach artifact to an existing record instead of creating a new record")
+    artifact_text.add_argument("--label")
+    artifact_text.add_argument("--summary")
+    artifact_text.add_argument("--body")
+    artifact_text.add_argument("--source-uri")
+    artifact_text.add_argument("--tag", action="append", default=[])
+    artifact_text.add_argument("--related-subject", action="append", default=[])
+    artifact_text.add_argument("--created-by")
+    artifact_text.add_argument("--visibility", default="private", choices=["private", "internal", "shareable", "public"])
+    artifact_text.add_argument("--json", action="store_true")
+    artifact_text.set_defaults(func=cmd_artifact_add_text)
+    artifact_associate = artifact_sub.add_parser("associate", help="Associate a record with an artifact")
+    artifact_associate.add_argument("record_id")
+    artifact_associate.add_argument("artifact_id")
+    artifact_associate.add_argument("--relation", default="associated_with", choices=[item for item in ASSOCIATION_RELATIONS if item != "supersedes"])
+    artifact_associate.add_argument("--note")
+    artifact_associate.add_argument("--strength", type=float)
+    artifact_associate.add_argument("--source", default="manual", choices=["manual", "agent", "import", "inferred"])
+    artifact_associate.add_argument("--created-by")
+    artifact_associate.add_argument("--json", action="store_true")
+    artifact_associate.set_defaults(func=cmd_artifact_associate)
     artifact_list = artifact_sub.add_parser("list", help="List stored artifacts")
     artifact_list.add_argument("subject", nargs="?")
-    artifact_list.add_argument("--type", choices=["html", "image"])
+    artifact_list.add_argument("--type", choices=ARTIFACT_TYPES)
     artifact_list.add_argument("--all", action="store_true", help="Include artifacts attached to obsolete records")
     artifact_list.add_argument("--limit", type=int, default=100)
     artifact_list.add_argument("--json", action="store_true")
@@ -156,20 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     associate = subparsers.add_parser("associate", help="Associate two records")
     associate.add_argument("from_record_id")
     associate.add_argument("to_record_id")
-    associate.add_argument("--relation", default="associated_with", choices=[
-        "associated_with",
-        "supersedes",
-        "supports",
-        "contradicts",
-        "depends_on",
-        "derived_from",
-        "duplicates",
-        "clarifies",
-        "blocks",
-        "implements",
-        "raises_question",
-        "answers_question",
-    ])
+    associate.add_argument("--relation", default="associated_with", choices=ASSOCIATION_RELATIONS)
     associate.add_argument("--note")
     associate.add_argument("--strength", type=float)
     associate.add_argument("--source", default="manual", choices=["manual", "agent", "import", "inferred"])
@@ -316,6 +338,16 @@ def cmd_view(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPath
     return 0
 
 
+def cmd_coverage(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    report = ledger.coverage_report(
+        subject=args.subject,
+        include_obsolete=args.all,
+        limit=args.limit,
+    )
+    output(report, args.json, fallback=format_coverage(report))
+    return 0
+
+
 def cmd_evidence_add(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
     evidence_id = ledger.add_evidence(
         record_id=args.record_id,
@@ -375,6 +407,59 @@ def cmd_artifact_add_image(args: argparse.Namespace, ledger: EventedLedger, _pat
         export_visibility=args.visibility,
     )
     output(result, args.json, fallback=f"added artifact {result['id']} ({result['url']})")
+    return 0
+
+
+def cmd_artifact_add_text(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    if args.file:
+        path = Path(args.file).expanduser()
+        content = path.read_bytes()
+        extension = args.extension or path.suffix or default_text_extension(args.type)
+        source_uri = args.source_uri or str(path)
+        label = args.label or path.name
+    elif args.content is not None:
+        content = args.content.encode("utf-8")
+        extension = args.extension or default_text_extension(args.type)
+        source_uri = args.source_uri
+        label = args.label
+    elif not sys.stdin.isatty():
+        content = sys.stdin.read().encode("utf-8")
+        extension = args.extension or default_text_extension(args.type)
+        source_uri = args.source_uri
+        label = args.label
+    else:
+        raise ValueError("artifact content is required; use --file, --content, or stdin")
+    result = ledger.add_artifact(
+        subject=args.subject,
+        artifact_type=args.type,
+        content=content,
+        extension=extension,
+        content_type=args.content_type,
+        label=label,
+        summary=args.summary,
+        body=args.body,
+        source_uri=source_uri,
+        record_id=args.record_id,
+        tags=args.tag,
+        related_subjects=args.related_subject,
+        created_by=args.created_by,
+        export_visibility=args.visibility,
+    )
+    output(result, args.json, fallback=f"added artifact {result['id']} ({result['url']})")
+    return 0
+
+
+def cmd_artifact_associate(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    association_id = ledger.associate_artifact(
+        record_id=args.record_id,
+        artifact_id=args.artifact_id,
+        relation=args.relation,
+        note=args.note,
+        strength=args.strength,
+        source=args.source,
+        created_by=args.created_by,
+    )
+    output({"id": association_id}, args.json, fallback=f"associated artifact {association_id}")
     return 0
 
 
@@ -541,6 +626,12 @@ def format_record(record: dict[str, Any]) -> str:
         for item in record["artifacts"]:
             label = f" ({item['label']})" if item.get("label") else ""
             lines.append(f"- {item['type']}: {item['id']}{label} /artifacts/{item['id']}/content")
+    if record.get("artifact_associations"):
+        lines.append("")
+        lines.append("artifact associations:")
+        for item in record["artifact_associations"]:
+            label = f" ({item['label']})" if item.get("label") else ""
+            lines.append(f"- {item['relation']} -> {item['artifact_id']} [{item['artifact_type']}]{label}")
     if record["associations_out"] or record["associations_in"]:
         lines.append("")
         lines.append("associations:")
@@ -610,6 +701,33 @@ def format_artifacts(rows: list[dict[str, Any]]) -> str:
             f"{row['subject']} record={row['record_id']}{label}"
         )
     return "\n".join(lines)
+
+
+def format_coverage(report: dict[str, Any]) -> str:
+    sections = [
+        ("requirements_without_test_cases", report["requirements_without_test_cases"]),
+        ("accepted_decisions_without_evidence", report["accepted_decisions_without_evidence"]),
+        ("ui_notes_without_artifacts", report["ui_notes_without_artifacts"]),
+        ("artifacts_without_associations", report["artifacts_without_associations"]),
+    ]
+    lines = [f"coverage: {report.get('subject') or '(all)'}"]
+    for title, rows in sections:
+        lines.append(f"{title}: {len(rows)}")
+        for row in rows:
+            label = row.get("summary") or row.get("label") or row["id"]
+            lines.append(f"  - {row['id']} {row['subject']} - {label}")
+    return "\n".join(lines)
+
+
+def default_text_extension(artifact_type: str) -> str:
+    return {
+        "snippet": ".txt",
+        "pseudocode": ".txt",
+        "markdown": ".md",
+        "json": ".json",
+        "yaml": ".yaml",
+        "text": ".txt",
+    }[artifact_type]
 
 
 if __name__ == "__main__":

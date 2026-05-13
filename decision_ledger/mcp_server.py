@@ -13,7 +13,7 @@ from . import __version__
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .guidance import CAPTURE_PROMPT, SERVER_INSTRUCTIONS, TOOL_GUIDANCE
-from .model import RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, json_dumps
+from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, json_dumps
 
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -167,7 +167,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 TOOL_GUIDANCE["decision_add_record"],
                 {
                     "subject": string_schema("Dot-separated primary subject, for example product.auth.oauth.client-persistence."),
-                    "body": string_schema("Free-form thought, idea, snag, decision, assumption, question, finding, plan, or note body."),
+                    "body": string_schema("Free-form thought, idea, snag, decision, assumption, question, finding, plan, note, requirement, constraint, test case, UI note, or interface contract body."),
                     "kind": enum_schema(list(RECORD_KINDS), "Record kind."),
                     "status": enum_schema(["active", "proposed", "accepted", "rejected", "superseded", "withdrawn", "resolved", "archived"], "Record status."),
                     "validation_state": enum_schema(list(VALIDATION_STATES), "Validation state. Keep this separate from lifecycle status."),
@@ -281,6 +281,30 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
             ),
             lambda args: add_image_artifact_tool(ledger, args),
         ),
+        "decision_add_text_artifact": (
+            tool_definition(
+                "decision_add_text_artifact",
+                "Add Text Artifact",
+                TOOL_GUIDANCE["decision_add_text_artifact"],
+                {
+                    "subject": string_schema("Dot-separated subject for the artifact record."),
+                    "type": enum_schema([item for item in ARTIFACT_TYPES if item not in {"html", "image"}], "Focused text artifact type."),
+                    "content": string_schema("Artifact content. Use for focused snippets, pseudocode, markdown, JSON, YAML, or plain text; do not ingest whole codebases."),
+                    "extension": string_schema("Storage extension, for example .md, .py, .json, or .txt."),
+                    "content_type": string_schema("Optional content type override."),
+                    "record_id": string_schema("Optional existing record to attach the artifact to. If omitted, a note record is created."),
+                    "label": string_schema("Short artifact label."),
+                    "summary": string_schema("Summary for the created record and artifact listing."),
+                    "body": string_schema("Optional body for the created record."),
+                    "tags": array_schema("Loose tags for the created artifact record."),
+                    "related_subjects": array_schema("Secondary subject prefixes for the created artifact record."),
+                    "created_by": string_schema("Human or agent creating the artifact."),
+                    "visibility": enum_schema(["private", "internal", "shareable", "public"], "Export visibility."),
+                },
+                required=["subject", "type", "content"],
+            ),
+            lambda args: add_text_artifact_tool(ledger, args),
+        ),
         "decision_list_artifacts": (
             tool_definition(
                 "decision_list_artifacts",
@@ -288,7 +312,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 TOOL_GUIDANCE["decision_list_artifacts"],
                 {
                     "subject": string_schema("Optional subject prefix."),
-                    "type": enum_schema(["html", "image"], "Optional artifact type."),
+                    "type": enum_schema(list(ARTIFACT_TYPES), "Optional artifact type."),
                     "include_obsolete": {"type": "boolean", "description": "Include artifacts attached to obsolete records."},
                     "limit": {"type": "integer", "description": "Maximum result count."},
                 },
@@ -324,11 +348,7 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 {
                     "from_record_id": string_schema("Source record id."),
                     "to_record_id": string_schema("Target record id."),
-                    "relation": enum_schema([
-                        "associated_with", "supersedes", "supports", "contradicts",
-                        "depends_on", "derived_from", "duplicates", "clarifies",
-                        "blocks", "implements", "raises_question", "answers_question",
-                    ], "Association relation."),
+                    "relation": enum_schema(list(ASSOCIATION_RELATIONS), "Association relation."),
                     "note": string_schema("Why the records are associated."),
                     "strength": {"type": "number", "description": "Optional association strength."},
                     "source": enum_schema(["manual", "agent", "import", "inferred"], "Association source."),
@@ -339,6 +359,32 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
             lambda args: {"id": ledger.associate(
                 from_record_id=require_str(args, "from_record_id"),
                 to_record_id=require_str(args, "to_record_id"),
+                relation=args.get("relation", "associated_with"),
+                note=args.get("note"),
+                strength=args.get("strength"),
+                source=args.get("source", "manual"),
+                created_by=args.get("created_by"),
+            )},
+        ),
+        "decision_associate_artifact": (
+            tool_definition(
+                "decision_associate_artifact",
+                "Associate Record With Artifact",
+                TOOL_GUIDANCE["decision_associate_artifact"],
+                {
+                    "record_id": string_schema("Record id."),
+                    "artifact_id": string_schema("Artifact id."),
+                    "relation": enum_schema([item for item in ASSOCIATION_RELATIONS if item != "supersedes"], "Association relation."),
+                    "note": string_schema("Why the record and artifact are associated."),
+                    "strength": {"type": "number", "description": "Optional association strength."},
+                    "source": enum_schema(["manual", "agent", "import", "inferred"], "Association source."),
+                    "created_by": string_schema("Human or agent adding the association."),
+                },
+                required=["record_id", "artifact_id"],
+            ),
+            lambda args: {"id": ledger.associate_artifact(
+                record_id=require_str(args, "record_id"),
+                artifact_id=require_str(args, "artifact_id"),
                 relation=args.get("relation", "associated_with"),
                 note=args.get("note"),
                 strength=args.get("strength"),
@@ -426,6 +472,23 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 query_record_schema(),
             ),
             lambda args: ledger.query_records(**query_record_args(args)),
+        ),
+        "decision_coverage_report": (
+            tool_definition(
+                "decision_coverage_report",
+                "Decision Coverage Report",
+                TOOL_GUIDANCE["decision_coverage_report"],
+                {
+                    "subject": string_schema("Optional subject prefix."),
+                    "include_obsolete": {"type": "boolean", "description": "Include obsolete records."},
+                    "limit": {"type": "integer", "description": "Maximum result count per section."},
+                },
+            ),
+            lambda args: ledger.coverage_report(
+                subject=args.get("subject"),
+                include_obsolete=bool(args.get("include_obsolete", False)),
+                limit=int(args.get("limit", 100)),
+            ),
         ),
         "decision_create_view": (
             tool_definition(
@@ -715,6 +778,35 @@ def add_image_artifact_tool(ledger: EventedLedger, args: JsonObject) -> JsonObje
         summary=args.get("summary"),
         body=args.get("body"),
         source_uri=source_uri,
+        record_id=args.get("record_id"),
+        tags=list_arg(args, "tags"),
+        related_subjects=list_arg(args, "related_subjects"),
+        created_by=args.get("created_by"),
+        export_visibility=args.get("visibility", "private"),
+    )
+
+
+def add_text_artifact_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
+    artifact_type = require_str(args, "type")
+    content = require_str(args, "content").encode("utf-8")
+    extension = args.get("extension") or {
+        "snippet": ".txt",
+        "pseudocode": ".txt",
+        "markdown": ".md",
+        "json": ".json",
+        "yaml": ".yaml",
+        "text": ".txt",
+    }.get(artifact_type, ".txt")
+    return ledger.add_artifact(
+        subject=require_str(args, "subject"),
+        artifact_type=artifact_type,
+        content=content,
+        extension=str(extension),
+        content_type=args.get("content_type"),
+        label=args.get("label"),
+        summary=args.get("summary"),
+        body=args.get("body"),
+        source_uri=None,
         record_id=args.get("record_id"),
         tags=list_arg(args, "tags"),
         related_subjects=list_arg(args, "related_subjects"),

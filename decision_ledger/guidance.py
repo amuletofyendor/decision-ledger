@@ -26,11 +26,19 @@ Best practices:
   the user to delete records for normal forgetting.
 - Attach evidence for claims that may matter later. Use command evidence for
   rerunnable checks and artifact evidence for captured point-in-time output.
+- Use requirement, constraint, test_case, ui_note, and interface_contract records
+  when software-project intent needs more precision than a generic thought or
+  decision.
 - Use HTML or image artifacts when the user or LLM has created useful
   HTML-presented or visual material worth retaining. Artifacts are first-class
   captured objects with subjects, timestamps, provenance, visibility, and
   record associations; views are the later synthesis layer over records and
   artifacts.
+- Use text artifacts for focused snippets, pseudocode, markdown, JSON, YAML, or
+  plain text when those forms express intent better than prose. Do not ingest
+  whole codebases, mirror source trees, or treat the ledger as the filesystem.
+- Use artifact associations when a mockup, snippet, pseudocode block, or other
+  artifact verifies, constrains, illustrates, supports, or implements a record.
 - Use decision_view_subject when the user wants an associated slice of records
   and artifacts from a subject tree. Wiki subject views render these slices as a
   dated synthesis layer with records and embedded artifacts.
@@ -67,6 +75,8 @@ Best practices:
   is the canonical wiki path.
 - If a user says "forget X before time T", interpret it as supersede or withdraw
   from future reasoning while preserving audit history.
+- Keep Decision Ledger implementation-process agnostic. Do not use it to drive
+  builds, orchestrate variants, or replace Git/build tooling.
 """
 
 
@@ -77,9 +87,11 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
 3. If the user chooses a direction, create a decision record and associate or
    supersede the idea record it came from when that relationship matters.
 4. Attach evidence links for files, URLs, commands, tickets, logs, or artifacts.
-5. If an LLM or user creates a useful HTML page or image, save it with
-   decision_add_html_artifact or decision_add_image_artifact and associate the
-   resulting record with the relevant subject, demo, decision, or finding.
+5. If an LLM or user creates a useful HTML page, image, focused snippet,
+   pseudocode, markdown, JSON, YAML, or text artifact, save it with the relevant
+   artifact tool such as decision_add_html_artifact, decision_add_image_artifact,
+   or decision_add_text_artifact, then associate it with the record it clarifies
+   or constrains.
 6. Set validation_state separately from status. Default to unvalidated until a
    claim has been checked against evidence; mark contested or invalidated when
    evidence points against it.
@@ -96,6 +108,9 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
    localhost port so the user can browse current ledger data immediately.
 13. If a reusable view should be retained, use decision_save_view. Do not save
    rendered view HTML as an HTML artifact; artifacts are ancillary data.
+14. Do not ingest whole codebases or drive implementation builds from the ledger.
+   Capture focused intent and supporting artifacts, then leave source files and
+   build execution to normal tools.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.
 """
@@ -104,11 +119,14 @@ Do not delete audit history for normal forgetting. Supersede it and explain why.
 TOOL_GUIDANCE = {
     "decision_guidance": "Return the built-in Decision Ledger operating guidance. Call this when uncertain how to use the ledger.",
     "decision_rebuild_projection": "Rebuild the generated SQLite projection from canonical namespace JSONL event files. Use after pulling event changes from git or when SQLite is missing/stale.",
-    "decision_add_record": "Create a thought, idea, snag, decision, assumption, question, finding, plan, or note. Use for durable context the user may want to retrieve later.",
+    "decision_add_record": "Create a thought, idea, snag, decision, assumption, question, finding, plan, note, requirement, constraint, test case, UI note, or interface contract. Use for durable context the user may want to retrieve later.",
     "decision_add_evidence": "Attach evidence to an existing record. Prefer this for audit-worthy claims, live checks, source files, URLs, commands, and captured artifacts.",
     "decision_add_html_artifact": "Store a complete trusted HTML artifact with inline CSS/JavaScript allowed. Use for useful HTML-presented material the user or LLM wants to retain with ledger auditability.",
     "decision_add_image_artifact": "Store an image artifact in the ledger. Use for diagrams, screenshots, generated images, and visual evidence that should be associated with ledger records.",
-    "decision_list_artifacts": "List stored HTML and image artifacts by subject/type. Use before linking, opening, or building a view over artifacts.",
+    "decision_add_text_artifact": "Store a focused text/code-like artifact such as a snippet, pseudocode, markdown, JSON, YAML, or plain text. Do not use this to ingest whole codebases.",
+    "decision_list_artifacts": "List stored artifacts by subject/type. Use before linking, opening, or building a view over artifacts.",
+    "decision_associate_artifact": "Associate a record with an artifact when the artifact verifies, constrains, illustrates, supports, or otherwise clarifies the record.",
+    "decision_coverage_report": "Report simple coverage and consistency gaps, such as requirements without test cases, accepted decisions without evidence, UI notes without artifacts, and artifacts without associations.",
     "decision_validate_record": "Change a record's validation state without changing its lifecycle status. Use validated for checked claims, contested for disputed claims, and invalidated when evidence disproves a record.",
     "decision_associate_records": "Create a graph link between two records when subject namespace alone does not capture their relationship.",
     "decision_supersede_record": "Mark one record as superseded by another. Use this for normal forgetting instead of deleting old audit history.",

@@ -9,7 +9,40 @@ from typing import Any
 CURRENT_STATUSES = ("active", "proposed", "accepted", "resolved")
 OBSOLETE_STATUSES = ("superseded", "rejected", "withdrawn", "archived")
 RECORD_STATUSES = (*CURRENT_STATUSES, *OBSOLETE_STATUSES)
-RECORD_KINDS = ("thought", "idea", "snag", "decision", "assumption", "question", "finding", "plan", "note")
+RECORD_KINDS = (
+    "thought",
+    "idea",
+    "snag",
+    "decision",
+    "assumption",
+    "question",
+    "finding",
+    "plan",
+    "note",
+    "requirement",
+    "constraint",
+    "test_case",
+    "ui_note",
+    "interface_contract",
+)
+ARTIFACT_TYPES = ("html", "image", "snippet", "pseudocode", "markdown", "json", "yaml", "text")
+ASSOCIATION_RELATIONS = (
+    "associated_with",
+    "supersedes",
+    "supports",
+    "contradicts",
+    "depends_on",
+    "derived_from",
+    "duplicates",
+    "clarifies",
+    "blocks",
+    "implements",
+    "raises_question",
+    "answers_question",
+    "verifies",
+    "constrains",
+    "illustrates",
+)
 VALIDATION_STATES = ("unvalidated", "partially_validated", "validated", "contested", "invalidated")
 SYMMETRIC_RELATIONS = {"associated_with", "duplicates"}
 

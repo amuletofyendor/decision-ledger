@@ -51,6 +51,9 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "decision_validate_record" in tool_names
     assert "decision_add_html_artifact" in tool_names
     assert "decision_add_image_artifact" in tool_names
+    assert "decision_add_text_artifact" in tool_names
+    assert "decision_associate_artifact" in tool_names
+    assert "decision_coverage_report" in tool_names
     assert "decision_list_artifacts" in tool_names
     assert "decision_view_subject" in tool_names
     assert "decision_query_records" in tool_names
@@ -65,6 +68,8 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     add_record_tool = next(tool for tool in tools if tool["name"] == "decision_add_record")
     assert "idea" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
     assert "snag" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
+    assert "requirement" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
+    assert "test_case" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
 
     prompts = request(server, "prompts/list")["result"]["prompts"]
     assert {prompt["name"] for prompt in prompts} == {
@@ -96,6 +101,7 @@ def test_prompt_get_bakes_in_usage_guidance(tmp_path: Path) -> None:
     assert "decision-wiki-server" in text
     assert "localhost port" in text
     assert "decision_add_html_artifact" in text
+    assert "artifact tool" in text
     assert "decision_save_view" in text
     assert "validation_state" in text
     assert "add it as an idea" in text
@@ -171,6 +177,30 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
     subject_view = tool_call(server, "decision_view_subject", {"subject": "product.auth"})
     assert artifact["id"] in {entry.get("artifact_id") for entry in subject_view["entries"]}
 
+    text_artifact = tool_call(
+        server,
+        "decision_add_text_artifact",
+        {
+            "subject": "product.auth.oauth",
+            "record_id": new,
+            "type": "snippet",
+            "content": "client_store.save(client)",
+            "label": "Persistence snippet",
+            "visibility": "internal",
+        },
+    )
+    assert text_artifact["type"] == "snippet"
+    artifact_association = tool_call(
+        server,
+        "decision_associate_artifact",
+        {
+            "record_id": new,
+            "artifact_id": text_artifact["id"],
+            "relation": "illustrates",
+        },
+    )
+    assert artifact_association["id"].startswith("asc_")
+
     queried = tool_call(
         server,
         "decision_query_records",
@@ -244,6 +274,57 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
     rebuilt = tool_call(server, "decision_show_record", {"record_id": new})
     assert rebuilt["summary"] == "New decision"
     assert rebuilt["validation_state"] == "validated"
+    assert text_artifact["id"] in {item["artifact_id"] for item in rebuilt["artifact_associations"]}
+
+
+def test_mcp_coverage_report_for_intent_records(tmp_path: Path) -> None:
+    server = MCPServer(tmp_path / "ledger.sqlite")
+
+    requirement = tool_call(
+        server,
+        "decision_add_record",
+        {
+            "subject": "product.checkout.requirements.payment",
+            "kind": "requirement",
+            "summary": "Payment required",
+            "body": "Checkout requires payment confirmation.",
+        },
+    )["id"]
+    test_case = tool_call(
+        server,
+        "decision_add_record",
+        {
+            "subject": "product.checkout.tests.payment",
+            "kind": "test_case",
+            "summary": "Payment test",
+            "body": "Verify payment confirmation.",
+        },
+    )["id"]
+    tool_call(
+        server,
+        "decision_associate_records",
+        {
+            "from_record_id": test_case,
+            "to_record_id": requirement,
+            "relation": "verifies",
+        },
+    )
+
+    accepted_without_evidence = tool_call(
+        server,
+        "decision_add_record",
+        {
+            "subject": "product.checkout.decisions.payment",
+            "kind": "decision",
+            "status": "accepted",
+            "summary": "Use redirect payments",
+            "body": "Use hosted payment redirects.",
+        },
+    )["id"]
+
+    coverage = tool_call(server, "decision_coverage_report", {"subject": "product.checkout"})
+    assert coverage["requirements_without_test_cases"] == []
+    assert [row["id"] for row in coverage["accepted_decisions_without_evidence"]] == [accepted_without_evidence]
 
 
 def test_batch_response_is_single_json_rpc_array(tmp_path: Path) -> None:

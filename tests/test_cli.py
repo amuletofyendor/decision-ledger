@@ -290,6 +290,110 @@ def test_html_and_image_artifacts_are_stored_and_rebuilt(tmp_path: Path, capsys)
     assert {artifact["id"] for artifact in rebuilt} == {html_result["id"], image_result["id"]}
 
 
+def test_intent_records_text_artifacts_associations_and_coverage(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+
+    assert run_cli(
+        db_path,
+        "add",
+        "product.checkout.requirements.payment",
+        "--kind",
+        "requirement",
+        "--summary",
+        "Payment must be confirmed",
+        "--body",
+        "The checkout flow must confirm payment before creating an order.",
+        "--json",
+    ) == 0
+    requirement_id = json.loads(capsys.readouterr().out)["id"]
+    assert run_cli(
+        db_path,
+        "add",
+        "product.checkout.tests.payment",
+        "--kind",
+        "test_case",
+        "--summary",
+        "Payment confirmation test",
+        "--body",
+        "Given a pending payment, when confirmation succeeds, then an order is created.",
+        "--json",
+    ) == 0
+    test_case_id = json.loads(capsys.readouterr().out)["id"]
+    assert run_cli(
+        db_path,
+        "associate",
+        test_case_id,
+        requirement_id,
+        "--relation",
+        "verifies",
+        "--json",
+    ) == 0
+    capsys.readouterr()
+
+    assert run_cli(
+        db_path,
+        "add",
+        "product.checkout.ui.payment",
+        "--kind",
+        "ui_note",
+        "--summary",
+        "Payment UI note",
+        "--body",
+        "The confirm button should stay disabled until payment details are valid.",
+        "--json",
+    ) == 0
+    ui_note_id = json.loads(capsys.readouterr().out)["id"]
+    assert run_cli(
+        db_path,
+        "artifact",
+        "add-text",
+        "product.checkout.ui.payment",
+        "--type",
+        "pseudocode",
+        "--content",
+        "if payment.valid then enable(confirmButton)",
+        "--label",
+        "Payment button pseudocode",
+        "--visibility",
+        "internal",
+        "--json",
+    ) == 0
+    artifact = json.loads(capsys.readouterr().out)
+    assert artifact["type"] == "pseudocode"
+    assert (tmp_path / artifact["storage_path"]).read_text(encoding="utf-8").startswith("if payment")
+
+    assert run_cli(
+        db_path,
+        "artifact",
+        "associate",
+        ui_note_id,
+        artifact["id"],
+        "--relation",
+        "illustrates",
+        "--json",
+    ) == 0
+    association_id = json.loads(capsys.readouterr().out)["id"]
+    assert association_id.startswith("asc_")
+
+    assert run_cli(db_path, "show", ui_note_id, "--json") == 0
+    ui_note = json.loads(capsys.readouterr().out)
+    assert ui_note["artifact_associations"][0]["artifact_id"] == artifact["id"]
+    assert ui_note["artifact_associations"][0]["relation"] == "illustrates"
+
+    assert run_cli(db_path, "coverage", "product.checkout", "--json") == 0
+    coverage = json.loads(capsys.readouterr().out)
+    assert coverage["requirements_without_test_cases"] == []
+    assert coverage["ui_notes_without_artifacts"] == []
+    assert coverage["artifacts_without_associations"] == []
+
+    db_path.unlink()
+    assert run_cli(db_path, "rebuild", "--skip-vectors", "--json") == 0
+    capsys.readouterr()
+    assert run_cli(db_path, "show", ui_note_id, "--json") == 0
+    rebuilt_ui_note = json.loads(capsys.readouterr().out)
+    assert rebuilt_ui_note["artifact_associations"][0]["artifact_id"] == artifact["id"]
+
+
 def test_cli_accepts_idea_kind(tmp_path: Path, capsys) -> None:
     db_path = tmp_path / "ledger.sqlite"
 
