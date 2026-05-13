@@ -220,6 +220,71 @@ def test_evidence_association_and_gather(tmp_path: Path, capsys) -> None:
     assert '"event_type":"associated"' in event_text
 
 
+def test_html_and_image_artifacts_are_stored_and_rebuilt(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+    html_path = tmp_path / "demo.html"
+    image_path = tmp_path / "diagram.png"
+    html_path.write_text(
+        "<!doctype html><style>body{color:#123}</style><script>window.demo=true</script><p>Artifact demo</p>",
+        encoding="utf-8",
+    )
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nexample")
+
+    assert run_cli(
+        db_path,
+        "artifact",
+        "add-html",
+        "connected-ai.demos.bubblebrook",
+        "--file",
+        str(html_path),
+        "--summary",
+        "Demo HTML",
+        "--visibility",
+        "internal",
+        "--json",
+    ) == 0
+    html_result = json.loads(capsys.readouterr().out)
+    assert html_result["type"] == "html"
+    assert html_result["url"] == f"/artifacts/{html_result['id']}/content"
+    assert (tmp_path / html_result["storage_path"]).read_text(encoding="utf-8").startswith("<!doctype html>")
+
+    assert run_cli(
+        db_path,
+        "artifact",
+        "add-image",
+        "connected-ai.demos.bubblebrook",
+        "--file",
+        str(image_path),
+        "--summary",
+        "Demo image",
+        "--visibility",
+        "internal",
+        "--json",
+    ) == 0
+    image_result = json.loads(capsys.readouterr().out)
+    assert image_result["type"] == "image"
+    assert image_result["content_type"] == "image/png"
+    assert (tmp_path / image_result["storage_path"]).read_bytes().startswith(b"\x89PNG")
+
+    assert run_cli(db_path, "artifact", "list", "connected-ai.demos", "--json") == 0
+    artifacts = json.loads(capsys.readouterr().out)
+    assert {artifact["id"] for artifact in artifacts} == {html_result["id"], image_result["id"]}
+
+    assert run_cli(db_path, "show", html_result["record_id"], "--json") == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["artifacts"][0]["id"] == html_result["id"]
+
+    event_text = (tmp_path / "events" / "connected-ai" / "demos" / "bubblebrook.jsonl").read_text(encoding="utf-8")
+    assert '"event_type":"artifact_added"' in event_text
+
+    db_path.unlink()
+    assert run_cli(db_path, "rebuild", "--skip-vectors", "--json") == 0
+    capsys.readouterr()
+    assert run_cli(db_path, "artifact", "list", "connected-ai.demos", "--json") == 0
+    rebuilt = json.loads(capsys.readouterr().out)
+    assert {artifact["id"] for artifact in rebuilt} == {html_result["id"], image_result["id"]}
+
+
 def test_cli_accepts_idea_kind(tmp_path: Path, capsys) -> None:
     db_path = tmp_path / "ledger.sqlite"
 

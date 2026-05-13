@@ -475,11 +475,13 @@ class Ledger:
         record_ids = [row["id"] for row in namespace_rows]
         associated_rows = self.associated_records(record_ids, include_obsolete=include_obsolete)
         evidence_rows = self.evidence_for_records(record_ids)
+        artifact_rows = self.artifacts_for_records(record_ids)
         grouped = {
             "current": [dict(row) for row in namespace_rows if row["status"] in CURRENT_STATUSES],
             "obsolete": [dict(row) for row in namespace_rows if row["status"] in OBSOLETE_STATUSES],
             "associated": [dict(row) for row in associated_rows],
             "evidence": [dict(row) for row in evidence_rows],
+            "artifacts": [dict(row) for row in artifact_rows],
         }
         return grouped
 
@@ -498,6 +500,7 @@ class Ledger:
                 )
             ],
             "evidence": [dict(item) for item in self.evidence_for_records([record_id])],
+            "artifacts": [dict(item) for item in self.artifacts_for_records([record_id])],
             "associations_out": [
                 dict(item)
                 for item in self.conn.execute(
@@ -553,6 +556,73 @@ class Ledger:
             """,
             record_ids,
         ).fetchall()
+
+    def artifacts_for_records(self, record_ids: list[str]) -> list[sqlite3.Row]:
+        if not record_ids:
+            return []
+        placeholders = ",".join("?" for _ in record_ids)
+        return self.conn.execute(
+            f"""
+            SELECT id, record_id, subject, type, content_type, storage_path, label, summary,
+                   source_uri, sha256, size_bytes, created_at, created_by, export_visibility
+            FROM artifacts
+            WHERE record_id IN ({placeholders})
+            ORDER BY created_at, id
+            """,
+            record_ids,
+        ).fetchall()
+
+    def list_artifacts(
+        self,
+        *,
+        subject: str | None = None,
+        artifact_type: str | None = None,
+        include_obsolete: bool = False,
+        limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if subject:
+            clauses.append("(a.subject = ? OR a.subject LIKE ?)")
+            params.extend([subject, f"{subject}.%"])
+        if artifact_type:
+            clauses.append("a.type = ?")
+            params.append(artifact_type)
+        if not include_obsolete:
+            placeholders = ",".join("?" for _ in CURRENT_STATUSES)
+            clauses.append(f"r.status IN ({placeholders})")
+            params.extend(CURRENT_STATUSES)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        return self.conn.execute(
+            f"""
+            SELECT a.id, a.record_id, a.subject, a.type, a.content_type, a.storage_path,
+                   a.label, a.summary, a.source_uri, a.sha256, a.size_bytes,
+                   a.created_at, a.created_by, a.export_visibility,
+                   r.status AS record_status, r.kind AS record_kind
+            FROM artifacts a
+            JOIN records r ON r.id = a.record_id
+            {where}
+            ORDER BY a.created_at DESC, a.id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+    def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT a.id, a.record_id, a.subject, a.type, a.content_type, a.storage_path,
+                   a.label, a.summary, a.source_uri, a.sha256, a.size_bytes,
+                   a.created_at, a.created_by, a.export_visibility,
+                   r.status AS record_status, r.kind AS record_kind, r.summary AS record_summary
+            FROM artifacts a
+            JOIN records r ON r.id = a.record_id
+            WHERE a.id = ?
+            """,
+            (artifact_id,),
+        ).fetchone()
+        return dict(row) if row else None
 
     def associated_records(self, record_ids: list[str], *, include_obsolete: bool = False) -> list[sqlite3.Row]:
         if not record_ids:

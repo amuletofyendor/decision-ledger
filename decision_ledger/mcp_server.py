@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import sys
 import traceback
@@ -219,6 +220,84 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 export_visibility=args.get("visibility", "private"),
                 created_by=args.get("created_by"),
             )},
+        ),
+        "decision_add_html_artifact": (
+            tool_definition(
+                "decision_add_html_artifact",
+                "Add HTML Artifact",
+                TOOL_GUIDANCE["decision_add_html_artifact"],
+                {
+                    "subject": string_schema("Dot-separated subject for the artifact record."),
+                    "html": string_schema("Complete HTML content to store. Inline CSS and inline JavaScript are allowed in this trusted local/team ledger."),
+                    "record_id": string_schema("Optional existing record to attach the artifact to. If omitted, a note record is created."),
+                    "label": string_schema("Short artifact label."),
+                    "summary": string_schema("Summary for the created record and artifact listing."),
+                    "body": string_schema("Optional body for the created record."),
+                    "tags": array_schema("Loose tags for the created artifact record."),
+                    "related_subjects": array_schema("Secondary subject prefixes for the created artifact record."),
+                    "created_by": string_schema("Human or agent creating the artifact."),
+                    "visibility": enum_schema(["private", "internal", "shareable", "public"], "Export visibility."),
+                },
+                required=["subject", "html"],
+            ),
+            lambda args: ledger.add_artifact(
+                subject=require_str(args, "subject"),
+                artifact_type="html",
+                content=require_str(args, "html").encode("utf-8"),
+                extension=".html",
+                content_type="text/html; charset=utf-8",
+                label=args.get("label"),
+                summary=args.get("summary"),
+                body=args.get("body"),
+                record_id=args.get("record_id"),
+                tags=list_arg(args, "tags"),
+                related_subjects=list_arg(args, "related_subjects"),
+                created_by=args.get("created_by"),
+                export_visibility=args.get("visibility", "private"),
+            ),
+        ),
+        "decision_add_image_artifact": (
+            tool_definition(
+                "decision_add_image_artifact",
+                "Add Image Artifact",
+                TOOL_GUIDANCE["decision_add_image_artifact"],
+                {
+                    "subject": string_schema("Dot-separated subject for the artifact record."),
+                    "source_path": string_schema("Local image path to copy into the ledger."),
+                    "base64_content": string_schema("Base64-encoded image bytes. Use this when source_path is not available."),
+                    "extension": string_schema("File extension for base64_content, for example .png."),
+                    "content_type": string_schema("Optional image content type override, for example image/png."),
+                    "record_id": string_schema("Optional existing record to attach the artifact to. If omitted, a note record is created."),
+                    "label": string_schema("Short artifact label."),
+                    "summary": string_schema("Summary for the created record and artifact listing."),
+                    "body": string_schema("Optional body for the created record."),
+                    "tags": array_schema("Loose tags for the created artifact record."),
+                    "related_subjects": array_schema("Secondary subject prefixes for the created artifact record."),
+                    "created_by": string_schema("Human or agent creating the artifact."),
+                    "visibility": enum_schema(["private", "internal", "shareable", "public"], "Export visibility."),
+                },
+                required=["subject"],
+            ),
+            lambda args: add_image_artifact_tool(ledger, args),
+        ),
+        "decision_list_artifacts": (
+            tool_definition(
+                "decision_list_artifacts",
+                "List Artifacts",
+                TOOL_GUIDANCE["decision_list_artifacts"],
+                {
+                    "subject": string_schema("Optional subject prefix."),
+                    "type": enum_schema(["html", "image"], "Optional artifact type."),
+                    "include_obsolete": {"type": "boolean", "description": "Include artifacts attached to obsolete records."},
+                    "limit": {"type": "integer", "description": "Maximum result count."},
+                },
+            ),
+            lambda args: [dict(row) for row in ledger.list_artifacts(
+                subject=args.get("subject"),
+                artifact_type=args.get("type"),
+                include_obsolete=bool(args.get("include_obsolete", False)),
+                limit=int(args.get("limit", 100)),
+            )],
         ),
         "decision_validate_record": (
             tool_definition(
@@ -487,6 +566,40 @@ def validate_record_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
         validated_at=args.get("validated_at"),
     )
     return {"record_id": record_id, "validation_state": validation_state}
+
+
+def add_image_artifact_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
+    source_path = args.get("source_path")
+    base64_content = args.get("base64_content")
+    if source_path:
+        path = Path(str(source_path)).expanduser()
+        content = path.read_bytes()
+        extension = path.suffix
+        source_uri = str(path)
+        label = args.get("label") or path.name
+    elif base64_content:
+        content = base64.b64decode(str(base64_content))
+        extension = args.get("extension") or ".img"
+        source_uri = None
+        label = args.get("label")
+    else:
+        raise ValueError("source_path or base64_content is required")
+    return ledger.add_artifact(
+        subject=require_str(args, "subject"),
+        artifact_type="image",
+        content=content,
+        extension=str(extension),
+        content_type=args.get("content_type"),
+        label=label,
+        summary=args.get("summary"),
+        body=args.get("body"),
+        source_uri=source_uri,
+        record_id=args.get("record_id"),
+        tags=list_arg(args, "tags"),
+        related_subjects=list_arg(args, "related_subjects"),
+        created_by=args.get("created_by"),
+        export_visibility=args.get("visibility", "private"),
+    )
 
 
 def require_record_result(ledger: EventedLedger, record_id: str) -> JsonObject:

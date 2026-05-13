@@ -26,6 +26,13 @@ Best practices:
   the user to delete records for normal forgetting.
 - Attach evidence for claims that may matter later. Use command evidence for
   rerunnable checks and artifact evidence for captured point-in-time output.
+- Use HTML or image artifacts when the user or LLM has created useful
+  HTML-presented or visual material worth retaining. Artifacts are first-class
+  captured objects with subjects, timestamps, provenance, visibility, and
+  record associations; views are the later synthesis layer over records and
+  artifacts.
+- Inline CSS and inline JavaScript are acceptable in saved HTML artifacts for
+  this trusted local/team ledger model.
 - Add association notes that explain why records are linked.
 - Keep record bodies clear and free-form, but keep subject, kind, status,
   evidence, tags, and related subjects structured.
@@ -59,19 +66,22 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
 3. If the user chooses a direction, create a decision record and associate or
    supersede the idea record it came from when that relationship matters.
 4. Attach evidence links for files, URLs, commands, tickets, logs, or artifacts.
-5. Set validation_state separately from status. Default to unvalidated until a
+5. If an LLM or user creates a useful HTML page or image, save it with
+   decision_add_html_artifact or decision_add_image_artifact and associate the
+   resulting record with the relevant subject, demo, decision, or finding.
+6. Set validation_state separately from status. Default to unvalidated until a
    claim has been checked against evidence; mark contested or invalidated when
    evidence points against it.
-6. Associate related records across namespaces when namespace alone is too weak.
-7. Supersede older active records when the user says they are obsolete.
-8. If existing markdown contains durable decisions, ideas, or snag lists, import them into
+7. Associate related records across namespaces when namespace alone is too weak.
+8. Supersede older active records when the user says they are obsolete.
+9. If existing markdown contains durable decisions, ideas, or snag lists, import them into
    the subject tree and link the markdown file as evidence.
-9. Preserve detail, but split multi-decision material into linked records when
+10. Preserve detail, but split multi-decision material into linked records when
    separate parts need independent subjects, tags, evidence, statuses, or future
    supersession.
-10. Do not skip capture just because a decision, idea, or snag seems small. Retain it
+11. Do not skip capture just because a decision, idea, or snag seems small. Retain it
    before context compaction or markdown burial can make it hard to recover.
-11. If the user asks for a wiki, normally start decision-wiki-server on a free
+12. If the user asks for a wiki, normally start decision-wiki-server on a free
    localhost port so the user can browse current ledger data immediately.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.
@@ -83,6 +93,9 @@ TOOL_GUIDANCE = {
     "decision_rebuild_projection": "Rebuild the generated SQLite projection from canonical namespace JSONL event files. Use after pulling event changes from git or when SQLite is missing/stale.",
     "decision_add_record": "Create a thought, idea, snag, decision, assumption, question, finding, plan, or note. Use for durable context the user may want to retrieve later.",
     "decision_add_evidence": "Attach evidence to an existing record. Prefer this for audit-worthy claims, live checks, source files, URLs, commands, and captured artifacts.",
+    "decision_add_html_artifact": "Store a complete trusted HTML artifact with inline CSS/JavaScript allowed. Use for useful HTML-presented material the user or LLM wants to retain with ledger auditability.",
+    "decision_add_image_artifact": "Store an image artifact in the ledger. Use for diagrams, screenshots, generated images, and visual evidence that should be associated with ledger records.",
+    "decision_list_artifacts": "List stored HTML and image artifacts by subject/type. Use before linking, opening, or building a view over artifacts.",
     "decision_validate_record": "Change a record's validation state without changing its lifecycle status. Use validated for checked claims, contested for disputed claims, and invalidated when evidence disproves a record.",
     "decision_associate_records": "Create a graph link between two records when subject namespace alone does not capture their relationship.",
     "decision_supersede_record": "Mark one record as superseded by another. Use this for normal forgetting instead of deleting old audit history.",

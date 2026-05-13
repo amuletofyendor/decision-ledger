@@ -121,6 +121,25 @@ supersede the idea record if that history will matter later.
 Use `kind=snag` for known issues, rough edges, cleanup items, and snag-list
 entries that should be retrievable alongside the rest of the audit trail.
 
+Store a self-contained HTML artifact or image artifact:
+
+```bash
+./bin/decisions artifact add-html connected-ai.demos.bubblebrook \
+  --file ~/Downloads/demo.html \
+  --summary "Bubblebrook demo HTML" \
+  --visibility internal
+
+./bin/decisions artifact add-image connected-ai.demos.bubblebrook \
+  --file ~/Downloads/bubblebrook_overview.png \
+  --summary "Bubblebrook overview diagram" \
+  --visibility internal
+```
+
+Artifacts are copied into `.decision-ledger/artifacts/...` and indexed through
+JSONL events. HTML artifacts are trusted local/team content; inline CSS and
+inline JavaScript are allowed. The live wiki serves artifacts at
+`/artifacts/<artifact_id>/content` and links them from the artifact record page.
+
 Set validation state separately from lifecycle status:
 
 ```bash
@@ -260,6 +279,9 @@ The MCP server exposes tools for:
 - `decision_rebuild_projection`
 - `decision_add_record`
 - `decision_add_evidence`
+- `decision_add_html_artifact`
+- `decision_add_image_artifact`
+- `decision_list_artifacts`
 - `decision_validate_record`
 - `decision_associate_records`
 - `decision_supersede_record`

@@ -118,6 +118,23 @@ def build_parser() -> argparse.ArgumentParser:
     evidence_add.add_argument("--json", action="store_true")
     evidence_add.set_defaults(func=cmd_evidence_add)
 
+    artifact = subparsers.add_parser("artifact", help="Manage stored HTML and image artifacts")
+    artifact_sub = artifact.add_subparsers(dest="artifact_command", required=True)
+    artifact_html = artifact_sub.add_parser("add-html", help="Store a self-contained HTML artifact")
+    add_artifact_arguments(artifact_html)
+    artifact_html.set_defaults(func=cmd_artifact_add_html)
+    artifact_image = artifact_sub.add_parser("add-image", help="Store an image artifact")
+    add_artifact_arguments(artifact_image)
+    artifact_image.add_argument("--content-type", help="Override detected image content type")
+    artifact_image.set_defaults(func=cmd_artifact_add_image)
+    artifact_list = artifact_sub.add_parser("list", help="List stored artifacts")
+    artifact_list.add_argument("subject", nargs="?")
+    artifact_list.add_argument("--type", choices=["html", "image"])
+    artifact_list.add_argument("--all", action="store_true", help="Include artifacts attached to obsolete records")
+    artifact_list.add_argument("--limit", type=int, default=100)
+    artifact_list.add_argument("--json", action="store_true")
+    artifact_list.set_defaults(func=cmd_artifact_list)
+
     validate = subparsers.add_parser("validate", help="Change a record validation state")
     validate.add_argument("record_id")
     validate.add_argument("--state", required=True, choices=VALIDATION_STATES)
@@ -162,6 +179,21 @@ def build_parser() -> argparse.ArgumentParser:
     supersede.set_defaults(func=cmd_supersede)
 
     return parser
+
+
+def add_artifact_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("subject")
+    parser.add_argument("--file", required=True, help="Artifact file to copy into the ledger")
+    parser.add_argument("--record-id", help="Attach artifact to an existing record instead of creating a new record")
+    parser.add_argument("--label")
+    parser.add_argument("--summary")
+    parser.add_argument("--body")
+    parser.add_argument("--source-uri")
+    parser.add_argument("--tag", action="append", default=[])
+    parser.add_argument("--related-subject", action="append", default=[])
+    parser.add_argument("--created-by")
+    parser.add_argument("--visibility", default="private", choices=["private", "internal", "shareable", "public"])
+    parser.add_argument("--json", action="store_true")
 
 
 def cmd_init(args: argparse.Namespace, _ledger: EventedLedger, paths: LedgerPaths) -> int:
@@ -280,6 +312,66 @@ def cmd_evidence_add(args: argparse.Namespace, ledger: EventedLedger, _paths: Le
         created_by=args.created_by,
     )
     output({"id": evidence_id}, args.json, fallback=f"added {evidence_id}")
+    return 0
+
+
+def cmd_artifact_add_html(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    path = Path(args.file).expanduser()
+    content = path.read_bytes()
+    result = ledger.add_artifact(
+        subject=args.subject,
+        artifact_type="html",
+        content=content,
+        extension=path.suffix or ".html",
+        content_type="text/html; charset=utf-8",
+        label=args.label or path.name,
+        summary=args.summary,
+        body=args.body,
+        source_uri=args.source_uri or str(path),
+        record_id=args.record_id,
+        tags=args.tag,
+        related_subjects=args.related_subject,
+        created_by=args.created_by,
+        export_visibility=args.visibility,
+    )
+    output(result, args.json, fallback=f"added artifact {result['id']} ({result['url']})")
+    return 0
+
+
+def cmd_artifact_add_image(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    path = Path(args.file).expanduser()
+    content = path.read_bytes()
+    result = ledger.add_artifact(
+        subject=args.subject,
+        artifact_type="image",
+        content=content,
+        extension=path.suffix,
+        content_type=args.content_type,
+        label=args.label or path.name,
+        summary=args.summary,
+        body=args.body,
+        source_uri=args.source_uri or str(path),
+        record_id=args.record_id,
+        tags=args.tag,
+        related_subjects=args.related_subject,
+        created_by=args.created_by,
+        export_visibility=args.visibility,
+    )
+    output(result, args.json, fallback=f"added artifact {result['id']} ({result['url']})")
+    return 0
+
+
+def cmd_artifact_list(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    rows = [
+        dict(row)
+        for row in ledger.list_artifacts(
+            subject=args.subject,
+            artifact_type=args.type,
+            include_obsolete=args.all,
+            limit=args.limit,
+        )
+    ]
+    output(rows, args.json, fallback=format_artifacts(rows))
     return 0
 
 
@@ -426,6 +518,12 @@ def format_record(record: dict[str, Any]) -> str:
         for item in record["evidence"]:
             label = f" ({item['label']})" if item.get("label") else ""
             lines.append(f"- {item['type']}: {item['uri']}{label}")
+    if record.get("artifacts"):
+        lines.append("")
+        lines.append("artifacts:")
+        for item in record["artifacts"]:
+            label = f" ({item['label']})" if item.get("label") else ""
+            lines.append(f"- {item['type']}: {item['id']}{label} /artifacts/{item['id']}/content")
     if record["associations_out"] or record["associations_in"]:
         lines.append("")
         lines.append("associations:")
@@ -442,6 +540,7 @@ def format_gathered(gathered: dict[str, Any]) -> str:
         ("associated", gathered["associated"]),
         ("obsolete", gathered["obsolete"]),
         ("evidence", gathered["evidence"]),
+        ("artifacts", gathered["artifacts"]),
     ]
     lines: list[str] = []
     for title, rows in sections:
@@ -452,10 +551,26 @@ def format_gathered(gathered: dict[str, Any]) -> str:
         for row in rows:
             if "uri" in row:
                 lines.append(f"  - {row['record_id']} {row['type']}: {row['uri']}")
+            elif "storage_path" in row:
+                label = f" - {row['label']}" if row.get("label") else ""
+                lines.append(f"  - {row['record_id']} {row['type']}: {row['id']}{label}")
             else:
                 summary = f" - {row['summary']}" if row.get("summary") else ""
                 relation = f" ({row['relation']})" if row.get("relation") else ""
                 lines.append(f"  - {row['id']} [{row['status']}/{row['kind']}/{row['validation_state']}] {row['subject']}{relation}{summary}")
+    return "\n".join(lines)
+
+
+def format_artifacts(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "no artifacts"
+    lines = []
+    for row in rows:
+        label = f" - {row['label']}" if row.get("label") else ""
+        lines.append(
+            f"{row['id']} [{row['type']}/{row['content_type']}] "
+            f"{row['subject']} record={row['record_id']}{label}"
+        )
     return "\n".join(lines)
 
 

@@ -19,8 +19,15 @@ def fetch(base_url: str, path: str) -> str:
         return response.read().decode("utf-8")
 
 
+def fetch_bytes(base_url: str, path: str) -> tuple[bytes, str]:
+    with urlopen(base_url + path, timeout=5) as response:  # noqa: S310 - local test server
+        return response.read(), response.headers["Content-Type"]
+
+
 def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: Path, capsys) -> None:
     db_path = tmp_path / "ledger.sqlite"
+    html_path = tmp_path / "inline.html"
+    html_path.write_text("<!doctype html><script>window.inlineOk=true</script><p>Inline artifact</p>", encoding="utf-8")
 
     assert run_cli(
         db_path,
@@ -35,6 +42,22 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
         "--json",
     ) == 0
     first_record_id = json.loads(capsys.readouterr().out)["id"]
+    assert run_cli(
+        db_path,
+        "artifact",
+        "add-html",
+        "decision-ledger.live.initial",
+        "--record-id",
+        first_record_id,
+        "--file",
+        str(html_path),
+        "--label",
+        "Inline HTML artifact",
+        "--visibility",
+        "internal",
+        "--json",
+    ) == 0
+    artifact_id = json.loads(capsys.readouterr().out)["id"]
 
     paths = resolve_ledger_paths(db_path=db_path, cwd=tmp_path)
     server = create_server(
@@ -60,6 +83,11 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
 
         record_html = fetch(base_url, f"/records/{first_record_id}/index.html")
         assert "This record exists before the server starts." in record_html
+        assert f"/artifacts/{artifact_id}/content" in record_html
+
+        artifact_body, artifact_type = fetch_bytes(base_url, f"/artifacts/{artifact_id}/content")
+        assert b"window.inlineOk=true" in artifact_body
+        assert artifact_type.startswith("text/html")
 
         assert run_cli(
             db_path,

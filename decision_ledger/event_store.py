@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import hashlib
+import mimetypes
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -101,6 +103,17 @@ class EventStore:
         if not parts or any(not part or "/" in part or "\\" in part for part in parts):
             raise ValueError(f"invalid subject for event path: {subject}")
         return self.events_dir.joinpath(*parts[:-1], parts[-1] + ".jsonl")
+
+    def write_artifact(self, *, subject: str, artifact_id: str, extension: str, content: bytes) -> str:
+        parts = subject.split(".")
+        if not parts or any(not part or "/" in part or "\\" in part for part in parts):
+            raise ValueError(f"invalid subject for artifact path: {subject}")
+        normalized_extension = normalize_extension(extension)
+        relative_path = Path("artifacts").joinpath(*parts, artifact_id + normalized_extension)
+        path = self.home / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return relative_path.as_posix()
 
     def has_events(self) -> bool:
         return any(self.events_dir.rglob("*.jsonl"))
@@ -229,6 +242,85 @@ class EventedLedger:
         apply_event(self.conn, event)
         self.conn.commit()
         return evidence_id
+
+    def add_artifact(
+        self,
+        *,
+        subject: str,
+        artifact_type: str,
+        content: bytes,
+        extension: str,
+        content_type: str | None = None,
+        label: str | None = None,
+        summary: str | None = None,
+        body: str | None = None,
+        source_uri: str | None = None,
+        record_id: str | None = None,
+        tags: list[str] | None = None,
+        related_subjects: list[str] | None = None,
+        created_by: str | None = None,
+        export_visibility: str = "private",
+    ) -> dict[str, Any]:
+        if artifact_type not in {"html", "image"}:
+            raise ValueError("artifact_type must be html or image")
+        if record_id:
+            record = self.require_record_dict(record_id)
+            subject = record["subject"]
+        else:
+            record_summary = summary or label or f"{artifact_type.upper()} artifact"
+            record_body = body or f"Captured {artifact_type} artifact: {record_summary}"
+            record_id = self.add_record(
+                subject=subject,
+                kind="note",
+                status="active",
+                summary=record_summary,
+                body=record_body,
+                created_by=created_by,
+                tags=tags or ["artifact", artifact_type],
+                related_subjects=related_subjects or [],
+                export_visibility=export_visibility,
+                validation_state="unvalidated",
+            )
+        artifact_id = new_id("art")
+        resolved_content_type = content_type or infer_content_type(extension, artifact_type)
+        storage_path = self.event_store.write_artifact(
+            subject=subject,
+            artifact_id=artifact_id,
+            extension=extension,
+            content=content,
+        )
+        created_at = now_iso()
+        event = self.event_store.append(
+            subject=subject,
+            event_type="artifact_added",
+            record_id=record_id,
+            created_by=created_by,
+            payload={
+                "artifact_id": artifact_id,
+                "type": artifact_type,
+                "content_type": resolved_content_type,
+                "storage_path": storage_path,
+                "label": label,
+                "summary": summary,
+                "source_uri": source_uri,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "size_bytes": len(content),
+                "created_at": created_at,
+                "created_by": created_by,
+                "export_visibility": export_visibility,
+            },
+        )
+        apply_event(self.conn, event)
+        self.conn.commit()
+        return {
+            "id": artifact_id,
+            "record_id": record_id,
+            "subject": subject,
+            "type": artifact_type,
+            "content_type": resolved_content_type,
+            "storage_path": storage_path,
+            "url": f"/artifacts/{artifact_id}/content",
+        }
 
     def associate(
         self,
@@ -368,6 +460,8 @@ def apply_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
         apply_record_created(conn, event)
     elif event_type == "evidence_added":
         apply_evidence_added(conn, event)
+    elif event_type == "artifact_added":
+        apply_artifact_added(conn, event)
     elif event_type == "associated":
         apply_associated(conn, event)
     elif event_type == "superseded":
@@ -443,6 +537,36 @@ def apply_evidence_added(conn: sqlite3.Connection, event: dict[str, Any]) -> Non
         ),
     )
     insert_projection_event(conn, event, "evidence_added")
+
+
+def apply_artifact_added(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
+    payload = event["payload"]
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO artifacts (
+          id, record_id, subject, type, content_type, storage_path, label, summary,
+          source_uri, sha256, size_bytes, created_at, created_by, export_visibility
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload["artifact_id"],
+            event["record_id"],
+            event["subject"],
+            payload["type"],
+            payload["content_type"],
+            payload["storage_path"],
+            payload.get("label"),
+            payload.get("summary"),
+            payload.get("source_uri"),
+            payload["sha256"],
+            payload["size_bytes"],
+            payload.get("created_at") or event["created_at"],
+            payload.get("created_by") or event.get("created_by"),
+            payload.get("export_visibility", "private"),
+        ),
+    )
+    insert_projection_event(conn, event, "artifact_added")
 
 
 def apply_associated(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
@@ -546,3 +670,22 @@ def insert_projection_event(conn: sqlite3.Connection, event: dict[str, Any], pro
 
 def event_now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="microseconds")
+
+
+def normalize_extension(extension: str) -> str:
+    normalized = extension.lower().strip()
+    if not normalized:
+        raise ValueError("artifact extension is required")
+    if not normalized.startswith("."):
+        normalized = "." + normalized
+    if "/" in normalized or "\\" in normalized or normalized in {".", ".."}:
+        raise ValueError(f"invalid artifact extension: {extension}")
+    return normalized
+
+
+def infer_content_type(extension: str, artifact_type: str) -> str:
+    normalized = normalize_extension(extension)
+    if artifact_type == "html":
+        return "text/html; charset=utf-8"
+    guessed, _encoding = mimetypes.guess_type("artifact" + normalized)
+    return guessed or "application/octet-stream"

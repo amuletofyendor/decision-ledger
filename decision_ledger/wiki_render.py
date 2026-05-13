@@ -117,6 +117,11 @@ def records_for_wiki(
                 for item in record["evidence"]
                 if item["export_visibility"] in PROFILE_VISIBILITY[profile]
             ]
+            record["artifacts"] = [
+                item
+                for item in record.get("artifacts", [])
+                if item["export_visibility"] in PROFILE_VISIBILITY[profile]
+            ]
             records.append(record)
     return sorted(records, key=lambda item: (item["subject"], item["created_at"], item["id"]))
 
@@ -174,6 +179,22 @@ def render_evidence(items: list[dict[str, Any]]) -> str:
         line = f":{item['line']}" if item.get("line") else ""
         note = f"<div class=\"meta\">{h(item['note'])}</div>" if item.get("note") else ""
         body.append(f"<li>{badge(item['type'])} {uri_html}{h(line)}{note}</li>")
+    body.append("</ul>")
+    return "\n".join(body)
+
+
+def render_artifacts(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "<p class=\"empty\">none</p>"
+    body = ["<ul class=\"clean\">"]
+    for item in items:
+        label = item.get("label") or item.get("summary") or item["id"]
+        link = f"/artifacts/{item['id']}/content"
+        meta = f"{item['content_type']} · {item['size_bytes']} bytes · {item['created_at']}"
+        body.append(
+            f"<li>{badge(item['type'])} <a href=\"{h(link)}\">{h(label)}</a>"
+            f"<div class=\"meta\">{h(meta)}</div></li>"
+        )
     body.append("</ul>")
     return "\n".join(body)
 

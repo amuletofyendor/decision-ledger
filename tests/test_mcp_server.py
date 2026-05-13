@@ -49,6 +49,9 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "decision_rebuild_projection" in tool_names
     assert "decision_add_record" in tool_names
     assert "decision_validate_record" in tool_names
+    assert "decision_add_html_artifact" in tool_names
+    assert "decision_add_image_artifact" in tool_names
+    assert "decision_list_artifacts" in tool_names
     assert "decision_vector_search" in tool_names
     assert "decision_supersede_subject_before" in tool_names
     assert "decision_list_topics" in tool_names
@@ -87,6 +90,7 @@ def test_prompt_get_bakes_in_usage_guidance(tmp_path: Path) -> None:
     assert "context compaction" in text
     assert "decision-wiki-server" in text
     assert "localhost port" in text
+    assert "decision_add_html_artifact" in text
     assert "validation_state" in text
     assert "add it as an idea" in text
     assert "Do not delete audit history" in text
@@ -142,6 +146,22 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
         },
     )
     assert evidence["id"].startswith("evd_")
+
+    artifact = tool_call(
+        server,
+        "decision_add_html_artifact",
+        {
+            "subject": "connected-ai.auth.oidc",
+            "record_id": new,
+            "html": "<!doctype html><script>window.ok=true</script><p>OIDC artifact</p>",
+            "label": "OIDC artifact",
+            "visibility": "internal",
+        },
+    )
+    assert artifact["id"].startswith("art_")
+    assert artifact["record_id"] == new
+    listed_artifacts = tool_call(server, "decision_list_artifacts", {"subject": "connected-ai.auth"})
+    assert [item["id"] for item in listed_artifacts["result"]] == [artifact["id"]]
 
     superseded = tool_call(
         server,

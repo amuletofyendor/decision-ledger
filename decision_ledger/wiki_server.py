@@ -22,6 +22,7 @@ from .wiki_render import (
     h,
     page,
     records_for_wiki,
+    render_artifacts,
     render_evidence,
     render_events,
     subject_prefixes,
@@ -175,6 +176,15 @@ def render_request(
             html = render_record_page(record, visible_record_ids)
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
+        if route.startswith("/artifacts/"):
+            artifact_id = artifact_id_from_route(route)
+            artifact = ledger.get_artifact(artifact_id)
+            if not artifact or artifact["record_id"] not in visible_record_ids:
+                return not_found("Artifact not found")
+            if artifact["export_visibility"] not in PROFILE_VISIBILITY[profile]:
+                return not_found("Artifact not found")
+            return artifact_bytes(paths, artifact), artifact["content_type"], HTTPStatus.OK
+
     return not_found("Wiki page not found")
 
 
@@ -293,6 +303,7 @@ def render_record_page(record: dict[str, Any], visible_record_ids: set[str]) -> 
         for item in record["related_subjects"]:
             body.append(f"<li>{h(item['relation'])}: {h(item['subject'])}</li>")
         body.append("</ul>")
+    body.extend(["<h2>Artifacts</h2>", render_artifacts(record.get("artifacts", []))])
     body.extend(["<h2>Evidence</h2>", render_evidence(record["evidence"])])
     body.extend(["<h2>Associations Out</h2>", render_associations(record["associations_out"], visible_record_ids, "->")])
     body.extend(["<h2>Associations In</h2>", render_associations(record["associations_in"], visible_record_ids, "<-")])
@@ -437,6 +448,10 @@ def record_id_from_route(route: str) -> str:
     return route.removeprefix("/records/").removesuffix("/index.html").strip("/")
 
 
+def artifact_id_from_route(route: str) -> str:
+    return route.removeprefix("/artifacts/").removesuffix("/content").strip("/")
+
+
 def breadcrumb(subject: str) -> str:
     parts = subject.split(".")
     crumbs = []
@@ -452,6 +467,17 @@ def subject_url(subject: str) -> str:
 
 def record_url(record_id: str) -> str:
     return f"/records/{record_id}/index.html"
+
+
+def artifact_bytes(paths: LedgerPaths, artifact: dict[str, Any]) -> bytes:
+    relative_path = artifact["storage_path"]
+    path = (paths.home / relative_path).resolve()
+    home = paths.home.resolve()
+    if home not in [path, *path.parents]:
+        raise ValueError("artifact path traversal rejected")
+    if not path.is_file():
+        raise ValueError(f"artifact file missing: {relative_path}")
+    return path.read_bytes()
 
 
 def json_bytes(value: Any) -> bytes:

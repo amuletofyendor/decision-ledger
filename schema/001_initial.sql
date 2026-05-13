@@ -77,6 +77,32 @@ CREATE INDEX IF NOT EXISTS idx_evidence_record_id ON evidence(record_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence(type);
 CREATE INDEX IF NOT EXISTS idx_evidence_uri ON evidence(uri);
 
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+  subject TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (
+    type IN ('html', 'image')
+  ),
+  content_type TEXT NOT NULL,
+  storage_path TEXT NOT NULL UNIQUE,
+  label TEXT,
+  summary TEXT,
+  source_uri TEXT,
+  sha256 TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  export_visibility TEXT NOT NULL DEFAULT 'private' CHECK (
+    export_visibility IN ('private', 'internal', 'shareable', 'public')
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_record_id ON artifacts(record_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_subject ON artifacts(subject);
+CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type);
+CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
+
 CREATE TABLE IF NOT EXISTS record_associations (
   id TEXT PRIMARY KEY,
   from_record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
@@ -123,6 +149,7 @@ CREATE TABLE IF NOT EXISTS record_events (
       'withdrawn',
       'associated',
       'evidence_added',
+      'artifact_added',
       'validation_changed',
       'tag_added',
       'export_visibility_changed'
