@@ -322,6 +322,44 @@ class EventedLedger:
             "url": f"/artifacts/{artifact_id}/content",
         }
 
+    def save_view(
+        self,
+        *,
+        subject: str,
+        title: str,
+        query: dict[str, Any],
+        created_by: str | None = None,
+        export_visibility: str = "private",
+    ) -> dict[str, Any]:
+        view_id = new_id("view")
+        created_at = now_iso()
+        event = self.event_store.append(
+            subject=subject,
+            event_type="view_saved",
+            record_id=view_id,
+            created_by=created_by,
+            payload={
+                "view_id": view_id,
+                "title": title,
+                "query": query,
+                "created_at": created_at,
+                "created_by": created_by,
+                "export_visibility": export_visibility,
+            },
+        )
+        apply_event(self.conn, event)
+        self.conn.commit()
+        return {
+            "id": view_id,
+            "subject": subject,
+            "title": title,
+            "query": query,
+            "created_at": created_at,
+            "created_by": created_by,
+            "export_visibility": export_visibility,
+            "url": f"/saved-views/{view_id}.html",
+        }
+
     def associate(
         self,
         *,
@@ -462,6 +500,8 @@ def apply_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
         apply_evidence_added(conn, event)
     elif event_type == "artifact_added":
         apply_artifact_added(conn, event)
+    elif event_type == "view_saved":
+        apply_view_saved(conn, event)
     elif event_type == "associated":
         apply_associated(conn, event)
     elif event_type == "superseded":
@@ -567,6 +607,27 @@ def apply_artifact_added(conn: sqlite3.Connection, event: dict[str, Any]) -> Non
         ),
     )
     insert_projection_event(conn, event, "artifact_added")
+
+
+def apply_view_saved(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
+    payload = event["payload"]
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO saved_views (
+          id, subject, title, query_json, created_at, created_by, export_visibility
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload["view_id"],
+            event["subject"],
+            payload["title"],
+            json.dumps(payload["query"], sort_keys=True),
+            payload.get("created_at") or event["created_at"],
+            payload.get("created_by") or event.get("created_by"),
+            payload.get("export_visibility", "private"),
+        ),
+    )
 
 
 def apply_associated(conn: sqlite3.Connection, event: dict[str, Any]) -> None:

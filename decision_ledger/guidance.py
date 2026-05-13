@@ -36,8 +36,12 @@ Best practices:
   dated synthesis layer with records and embedded artifacts.
 - Use decision_query_records for precise filtered retrieval such as all current
   snags, records by kind, or records excluding resolved/superseded statuses.
-  Use decision_create_view to materialize a filtered slice as a stored HTML
-  artifact with the query definition retained in the artifact record body.
+  Use decision_create_view to synthesize a transient filtered slice. Use
+  decision_save_view when a reusable view definition should be retained and
+  shown from the wiki front page.
+- Do not use HTML artifacts to persist views. HTML artifacts are ancillary
+  free-form data attached to ledger subjects or records. Saved views are query
+  definitions with their own audit trail and live wiki rendering.
 - Inline CSS and inline JavaScript are acceptable in saved HTML artifacts for
   this trusted local/team ledger model.
 - Add association notes that explain why records are linked.
@@ -90,6 +94,8 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
    before context compaction or markdown burial can make it hard to recover.
 12. If the user asks for a wiki, normally start decision-wiki-server on a free
    localhost port so the user can browse current ledger data immediately.
+13. If a reusable view should be retained, use decision_save_view. Do not save
+   rendered view HTML as an HTML artifact; artifacts are ancillary data.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.
 """
@@ -110,7 +116,9 @@ TOOL_GUIDANCE = {
     "decision_gather": "Gather current context for a subject prefix, including namespace records, associated records, and evidence.",
     "decision_view_subject": "Build a dated synthesis view for a subject prefix, containing ledger records and their stored artifacts.",
     "decision_query_records": "Precisely query records by subject, kind, status/excluded statuses, validation state, tags, date range, and inclusion options. Use when list/search are too blunt.",
-    "decision_create_view": "Materialize a filtered record query as a stored trusted HTML artifact. Use for reviewable slices such as open snags across the ledger.",
+    "decision_create_view": "Create a transient filtered view from a record query. It may render HTML in the response, but it does not persist anything.",
+    "decision_save_view": "Persist a reusable saved-view query definition. Saved views are separate from HTML artifacts and are rendered live from current ledger data in the wiki.",
+    "decision_list_views": "List persisted saved-view definitions. Use before linking or opening reusable views from the wiki.",
     "decision_search": "Combined lexical and vector search over decision records. Use this as the default fuzzy recall tool before adding duplicate thinking.",
     "decision_vector_search": "Semantic vector search over record subject, metadata, tags, related subjects, summary, and body. Use directly only when isolating vector behavior.",
     "decision_show_record": "Show a complete record with tags, evidence, associations, and audit events.",

@@ -430,19 +430,49 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
         "decision_create_view": (
             tool_definition(
                 "decision_create_view",
-                "Create Filtered HTML View",
+                "Create Filtered View",
                 TOOL_GUIDANCE["decision_create_view"],
                 {
                     **query_record_schema(),
-                    "subject": string_schema("Subject for the stored view artifact. Also used as a subject filter unless query_subject is provided."),
-                    "query_subject": string_schema("Optional subject prefix filter. Use this when the stored view subject differs from the query subject."),
+                    "subject": string_schema("Subject prefix filter for the view."),
                     "title": string_schema("View title."),
-                    "created_by": string_schema("Human or agent creating the view."),
-                    "visibility": enum_schema(["private", "internal", "shareable", "public"], "Export visibility."),
+                    "render_html": {"type": "boolean", "description": "Include transient rendered HTML in the response. This does not store an artifact."},
                 },
                 required=["subject"],
             ),
             lambda args: create_view_tool(ledger, args),
+        ),
+        "decision_save_view": (
+            tool_definition(
+                "decision_save_view",
+                "Save View Definition",
+                TOOL_GUIDANCE["decision_save_view"],
+                {
+                    **query_record_schema(),
+                    "subject": string_schema("Subject under which this saved view belongs. Defaults the query subject unless query_subject is supplied."),
+                    "query_subject": string_schema("Optional subject prefix filter for the records included by the saved view."),
+                    "title": string_schema("Saved view title."),
+                    "created_by": string_schema("Human or agent saving the view definition."),
+                    "visibility": enum_schema(["private", "internal", "shareable", "public"], "Export visibility."),
+                },
+                required=["subject", "title"],
+            ),
+            lambda args: save_view_tool(ledger, args),
+        ),
+        "decision_list_views": (
+            tool_definition(
+                "decision_list_views",
+                "List Saved Views",
+                TOOL_GUIDANCE["decision_list_views"],
+                {
+                    "subject": string_schema("Optional saved-view subject prefix."),
+                    "limit": {"type": "integer", "description": "Maximum result count."},
+                },
+            ),
+            lambda args: ledger.list_saved_views(
+                subject=args.get("subject"),
+                limit=int(args.get("limit", 100)),
+            ),
         ),
         "decision_search": (
             tool_definition(
@@ -696,7 +726,7 @@ def add_image_artifact_tool(ledger: EventedLedger, args: JsonObject) -> JsonObje
 def create_view_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
     subject = require_str(args, "subject")
     query_args = query_record_args(args)
-    query_args["subject"] = args.get("query_subject") or args.get("subject")
+    query_args["subject"] = subject
     if "include_body" not in args:
         query_args["include_body"] = True
     if "include_evidence" not in args:
@@ -705,19 +735,34 @@ def create_view_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
         query_args["include_artifacts"] = True
     records = ledger.query_records(**query_args)
     title = args.get("title") or f"Decision Ledger View: {query_args.get('subject') or 'all subjects'}"
-    html = render_query_view_html(title, records, query_args)
-    body = "Generated Decision Ledger view.\n\nQuery:\n" + json.dumps(query_args, indent=2, sort_keys=True)
-    return ledger.add_artifact(
+    result: JsonObject = {
+        "title": title,
+        "query": query_args,
+        "records": records,
+        "record_count": len(records),
+        "stored": False,
+        "persistence": "Call decision_save_view to persist a reusable view definition. HTML artifacts are ancillary data, not saved views.",
+    }
+    if bool(args.get("render_html", True)):
+        result["html"] = render_query_view_html(title, records, query_args)
+    return result
+
+
+def save_view_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
+    subject = require_str(args, "subject")
+    query_args = query_record_args(args)
+    if not args.get("query_subject"):
+        query_args["subject"] = subject
+    if "include_body" not in args:
+        query_args["include_body"] = True
+    if "include_evidence" not in args:
+        query_args["include_evidence"] = True
+    if "include_artifacts" not in args:
+        query_args["include_artifacts"] = True
+    return ledger.save_view(
         subject=subject,
-        artifact_type="html",
-        content=html.encode("utf-8"),
-        extension=".html",
-        content_type="text/html; charset=utf-8",
-        label=title,
-        summary=title,
-        body=body,
-        tags=["view", "html"],
-        related_subjects=[query_args["subject"]] if query_args.get("subject") and query_args["subject"] != subject else [],
+        title=require_str(args, "title"),
+        query=query_args,
         created_by=args.get("created_by"),
         export_visibility=args.get("visibility", "private"),
     )

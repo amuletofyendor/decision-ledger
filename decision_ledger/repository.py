@@ -624,6 +624,42 @@ class Ledger:
             "entries": entries,
         }
 
+    def list_saved_views(
+        self,
+        *,
+        subject: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if subject:
+            clauses.append("(subject = ? OR subject LIKE ?)")
+            params.extend([subject, f"{subject}.%"])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        rows = self.conn.execute(
+            f"""
+            SELECT id, subject, title, query_json, created_at, created_by, export_visibility
+            FROM saved_views
+            {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [saved_view_from_row(row) for row in rows]
+
+    def get_saved_view(self, view_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, subject, title, query_json, created_at, created_by, export_visibility
+            FROM saved_views
+            WHERE id = ?
+            """,
+            (view_id,),
+        ).fetchone()
+        return saved_view_from_row(row) if row else None
+
     def get_record(self, record_id: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
         if not row:
@@ -949,3 +985,10 @@ def validate_record_status(status: str) -> None:
     if status not in RECORD_STATUSES:
         allowed = ", ".join(RECORD_STATUSES)
         raise ValueError(f"unknown record status: {status}; expected one of {allowed}")
+
+
+def saved_view_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    item = dict(row)
+    item["query"] = json.loads(item.pop("query_json"))
+    item["url"] = f"/saved-views/{item['id']}.html"
+    return item

@@ -150,9 +150,14 @@ def render_request(
             profile=profile,
         )
         visible_record_ids = {record["id"] for record in records}
+        saved_views = saved_views_for_live_view(
+            ledger,
+            root_subject=root_subject,
+            profile=profile,
+        )
 
         if route in {"/", "/index.html"}:
-            html = render_index(root_subject, records, profile)
+            html = render_index(root_subject, records, saved_views, profile)
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
         if route == "/assets/search-index.json":
@@ -173,6 +178,22 @@ def render_request(
             if subject is None:
                 return not_found("View not found")
             html = render_subject_view_page(root_subject, subject, records, profile)
+            return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
+
+        if route.startswith("/saved-views/"):
+            view_id = saved_view_id_from_route(route)
+            saved_view = ledger.get_saved_view(view_id)
+            if not saved_view or saved_view["export_visibility"] not in PROFILE_VISIBILITY[profile]:
+                return not_found("Saved view not found")
+            if root_subject and not (saved_view["subject"] == root_subject or saved_view["subject"].startswith(root_subject + ".")):
+                return not_found("Saved view not found")
+            query_args = dict(saved_view["query"])
+            matching_records = [
+                record
+                for record in ledger.query_records(**query_args)
+                if record["id"] in visible_record_ids
+            ]
+            html = render_saved_view_page(root_subject, saved_view, matching_records, profile)
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
         if route.startswith("/records/"):
@@ -231,7 +252,21 @@ def records_for_live_view(
     )
 
 
-def render_index(root_subject: str, records: list[dict[str, Any]], profile: str) -> str:
+def saved_views_for_live_view(
+    ledger: Ledger,
+    *,
+    root_subject: str,
+    profile: str,
+) -> list[dict[str, Any]]:
+    saved_views = ledger.list_saved_views(subject=root_subject or None, limit=200)
+    return [
+        saved_view
+        for saved_view in saved_views
+        if saved_view["export_visibility"] in PROFILE_VISIBILITY[profile]
+    ]
+
+
+def render_index(root_subject: str, records: list[dict[str, Any]], saved_views: list[dict[str, Any]], profile: str) -> str:
     subjects = [record["subject"] for record in records]
     prefixes = sorted(subject_prefixes(root_subject, subjects)) if root_subject else sorted(all_subject_prefixes(subjects))
     current = len([record for record in records if record["status"] in CURRENT_STATUSES])
@@ -252,6 +287,8 @@ def render_index(root_subject: str, records: list[dict[str, Any]], profile: str)
         "<li><a href=\"/assets/search-index.json\">Search index JSON</a></li>",
         "<li><a href=\"/assets/graph.json\">Graph JSON</a></li>",
         "</ul>",
+        "<h2>Saved Views</h2>",
+        render_saved_view_list(saved_views),
         "<h2>Subject Pages</h2>",
         render_subject_tree(prefixes),
     ]
@@ -332,6 +369,59 @@ def render_subject_view_page(root_subject: str, subject: str, records: list[dict
                 "</section>"
             )
     return page(f"View: {subject}", body, "/assets/styles.css")
+
+
+def render_saved_view_page(root_subject: str, saved_view: dict[str, Any], records: list[dict[str, Any]], profile: str) -> str:
+    body = [
+        f"<p class=\"breadcrumb\"><a href=\"/\">wiki</a> / saved view / {h(saved_view['id'])}</p>",
+        f"<p class=\"meta\">Root: {h(root_subject or '(all)')}. Profile: {h(profile)}. Subject: "
+        f"<a href=\"{h(subject_url(saved_view['subject']))}\">{h(saved_view['subject'])}</a>. "
+        f"Records: {len(records)}.</p>",
+        f"<p class=\"meta\">Created: {h(saved_view['created_at'])}"
+        + (f" by {h(saved_view['created_by'])}" if saved_view.get("created_by") else "")
+        + "</p>",
+        "<h2>Query</h2>",
+        f"<pre class=\"body\">{h(json.dumps(saved_view['query'], indent=2, sort_keys=True))}</pre>",
+        "<h2>Records</h2>",
+    ]
+    if not records:
+        body.append("<p class=\"empty\">none</p>")
+    for record in records:
+        title = record.get("summary") or record["id"]
+        body.append(
+            "<section class=\"timeline-entry\">"
+            f"<div>{badge(record['kind'])}{badge(record['status'], 'status')}{validation_badge(record['validation_state'])}</div>"
+            f"<h2><a href=\"{h(record_url(record['id']))}\">{h(title)}</a></h2>"
+            f"<p class=\"meta\">{h(record['subject'])} · {h(record['created_at'])} · {h(record['id'])}</p>"
+            + (f"<pre class=\"body\">{h(record['body'])}</pre>" if record.get("body") else "")
+            + render_saved_view_record_artifacts(record)
+            + "</section>"
+        )
+    return page(saved_view["title"], body, "/assets/styles.css")
+
+
+def render_saved_view_list(saved_views: list[dict[str, Any]]) -> str:
+    if not saved_views:
+        return "<p class=\"empty\">none</p>"
+    body = ["<ul class=\"clean\">"]
+    for saved_view in saved_views:
+        body.append(
+            f"<li><a href=\"{h(saved_view_url(saved_view['id']))}\">{h(saved_view['title'])}</a>"
+            f"<div class=\"meta\">{h(saved_view['subject'])} - {h(saved_view['created_at'])}</div></li>"
+        )
+    body.append("</ul>")
+    return "\n".join(body)
+
+
+def render_saved_view_record_artifacts(record: dict[str, Any]) -> str:
+    artifacts = record.get("artifacts") or []
+    if not artifacts:
+        return ""
+    items = []
+    for artifact in artifacts:
+        label = artifact.get("label") or artifact.get("summary") or artifact["id"]
+        items.append(f"<li>{badge('artifact')}{badge(artifact['type'])} <a href=\"{h(artifact_url(artifact['id']))}\">{h(label)}</a></li>")
+    return "<h3>Artifacts</h3><ul class=\"clean\">" + "\n".join(items) + "</ul>"
 
 
 def render_record_page(record: dict[str, Any], visible_record_ids: set[str]) -> str:
@@ -522,6 +612,10 @@ def artifact_id_from_route(route: str) -> str:
     return route.removeprefix("/artifacts/").removesuffix("/content").strip("/")
 
 
+def saved_view_id_from_route(route: str) -> str:
+    return route.removeprefix("/saved-views/").removesuffix(".html").strip("/")
+
+
 def breadcrumb(subject: str) -> str:
     parts = subject.split(".")
     crumbs = []
@@ -537,6 +631,10 @@ def subject_url(subject: str) -> str:
 
 def subject_view_url(subject: str) -> str:
     return "/views/subjects/" + "/".join(subject.split(".")) + "/index.html"
+
+
+def saved_view_url(view_id: str) -> str:
+    return f"/saved-views/{view_id}.html"
 
 
 def record_url(record_id: str) -> str:

@@ -6,7 +6,8 @@ from pathlib import Path
 from urllib.request import urlopen
 
 from decision_ledger.cli import main as cli_main
-from decision_ledger.event_store import resolve_ledger_paths
+from decision_ledger.db import connect
+from decision_ledger.event_store import EventStore, EventedLedger, resolve_ledger_paths
 from decision_ledger.wiki_server import create_server
 
 
@@ -58,8 +59,34 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
         "--json",
     ) == 0
     artifact_id = json.loads(capsys.readouterr().out)["id"]
-
     paths = resolve_ledger_paths(db_path=db_path, cwd=tmp_path)
+    conn = connect(db_path)
+    try:
+        ledger = EventedLedger(conn, EventStore(paths.home), paths.db_path)
+        saved_view = ledger.save_view(
+            subject="decision-ledger.live",
+            title="Open Live Decisions",
+            query={
+                "subject": "decision-ledger.live",
+                "kind": None,
+                "status": None,
+                "exclude_status": [],
+                "validation_state": None,
+                "tags": [],
+                "created_from": None,
+                "created_to": None,
+                "include_obsolete": False,
+                "include_body": True,
+                "include_evidence": True,
+                "include_artifacts": True,
+                "limit": 50,
+                "sort": "created_desc",
+            },
+            export_visibility="internal",
+        )
+    finally:
+        conn.close()
+
     server = create_server(
         paths=paths,
         subject="decision-ledger",
@@ -80,10 +107,17 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
         assert '<ul class="tree">' in index_html
         assert '<span class="tree-marker" aria-hidden="true">' in index_html
         assert "└─" in index_html or "├─" in index_html
+        assert "Open Live Decisions" in index_html
+        assert f"/saved-views/{saved_view['id']}.html" in index_html
 
         record_html = fetch(base_url, f"/records/{first_record_id}/index.html")
         assert "This record exists before the server starts." in record_html
         assert f"/artifacts/{artifact_id}/content" in record_html
+
+        saved_view_html = fetch(base_url, f"/saved-views/{saved_view['id']}.html")
+        assert "Open Live Decisions" in saved_view_html
+        assert "Initial live record" in saved_view_html
+        assert "Inline HTML artifact" in saved_view_html
 
         view_html = fetch(base_url, "/views/subjects/decision-ledger/live/index.html")
         assert "Initial live record" in view_html

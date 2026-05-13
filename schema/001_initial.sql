@@ -103,6 +103,22 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_subject ON artifacts(subject);
 CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type);
 CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
 
+CREATE TABLE IF NOT EXISTS saved_views (
+  id TEXT PRIMARY KEY,
+  subject TEXT NOT NULL,
+  title TEXT NOT NULL,
+  query_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  export_visibility TEXT NOT NULL DEFAULT 'private' CHECK (
+    export_visibility IN ('private', 'internal', 'shareable', 'public')
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_views_subject ON saved_views(subject);
+CREATE INDEX IF NOT EXISTS idx_saved_views_created_at ON saved_views(created_at);
+CREATE INDEX IF NOT EXISTS idx_saved_views_visibility ON saved_views(export_visibility);
+
 CREATE TABLE IF NOT EXISTS record_associations (
   id TEXT PRIMARY KEY,
   from_record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,

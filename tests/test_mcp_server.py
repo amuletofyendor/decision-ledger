@@ -55,6 +55,8 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "decision_view_subject" in tool_names
     assert "decision_query_records" in tool_names
     assert "decision_create_view" in tool_names
+    assert "decision_save_view" in tool_names
+    assert "decision_list_views" in tool_names
     assert "decision_vector_search" in tool_names
     assert "decision_supersede_subject_before" in tool_names
     assert "decision_list_topics" in tool_names
@@ -94,6 +96,7 @@ def test_prompt_get_bakes_in_usage_guidance(tmp_path: Path) -> None:
     assert "decision-wiki-server" in text
     assert "localhost port" in text
     assert "decision_add_html_artifact" in text
+    assert "decision_save_view" in text
     assert "validation_state" in text
     assert "add it as an idea" in text
     assert "Do not delete audit history" in text
@@ -180,15 +183,31 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
         server,
         "decision_create_view",
         {
+            "subject": "connected-ai.auth",
+            "kind": "decision",
+            "title": "Auth Decisions View",
+        },
+    )
+    assert created_view["stored"] is False
+    assert created_view["record_count"] == 1
+    assert "Auth Decisions View" in created_view["html"]
+    assert "decision_save_view" in created_view["persistence"]
+
+    saved_view = tool_call(
+        server,
+        "decision_save_view",
+        {
             "subject": "decision-ledger.test-views",
             "query_subject": "connected-ai.auth",
             "kind": "decision",
-            "title": "Auth Decisions View",
+            "title": "Saved Auth Decisions",
             "visibility": "internal",
         },
     )
-    assert created_view["type"] == "html"
-    assert created_view["record_id"].startswith("rec_")
+    assert saved_view["id"].startswith("view_")
+    assert saved_view["url"] == f"/saved-views/{saved_view['id']}.html"
+    listed_views = tool_call(server, "decision_list_views", {"subject": "decision-ledger"})
+    assert [item["id"] for item in listed_views["result"]] == [saved_view["id"]]
 
     superseded = tool_call(
         server,
@@ -215,6 +234,8 @@ def test_mcp_tool_calls_cover_record_flow(tmp_path: Path) -> None:
     event_file = tmp_path / "events" / "connected-ai" / "auth" / "oidc.jsonl"
     assert event_file.exists()
     assert '"event_type":"superseded"' in event_file.read_text(encoding="utf-8")
+    saved_view_event_file = tmp_path / "events" / "decision-ledger" / "test-views.jsonl"
+    assert '"event_type":"view_saved"' in saved_view_event_file.read_text(encoding="utf-8")
 
     (tmp_path / "ledger.sqlite").unlink()
     rebuild = tool_call(server, "decision_rebuild_projection", {})

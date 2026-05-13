@@ -139,9 +139,15 @@ Artifacts are copied into `.decision-ledger/artifacts/...` and indexed through
 JSONL events. HTML artifacts are trusted local/team content; inline CSS and
 inline JavaScript are allowed. The live wiki serves artifacts at
 `/artifacts/<artifact_id>/content` and links them from the artifact record page.
-It also serves dated subject views at
+HTML artifacts are not the persistence mechanism for views; they are ancillary
+free-form material attached to ledger subjects or records.
+
+The live wiki also serves dated subject views at
 `/views/subjects/<subject/path>/index.html`, mixing records with embedded HTML
-and image artifacts from that subtree.
+and image artifacts from that subtree. Saved views are separate query
+definitions persisted through JSONL events into the generated SQLite projection;
+they are linked from the wiki front page and rendered live from current ledger
+data at `/saved-views/<view_id>.html`.
 
 Set validation state separately from lifecycle status:
 
@@ -207,6 +213,9 @@ Build a mixed subject view from records and artifacts:
 ```bash
 ./bin/decisions view connected-ai.bubblebrook.demo-artifacts
 ```
+
+MCP consumers can use `decision_create_view` for a transient filtered view and
+`decision_save_view` when a reusable view definition should appear in the wiki.
 
 List open snags without dropping to SQLite:
 
@@ -305,6 +314,8 @@ The MCP server exposes tools for:
 - `decision_view_subject`
 - `decision_query_records`
 - `decision_create_view`
+- `decision_save_view`
+- `decision_list_views`
 - `decision_search`
 - `decision_vector_search`
 - `decision_show_record`
@@ -336,6 +347,8 @@ The MCP surface deliberately bakes in usage guidance:
   transcripts, or repo docs into the subject tree, with the source document as
   evidence
 - start `decision-wiki-server` for browsable wiki views
+- use `decision_save_view` for reusable saved views; do not store rendered view
+  HTML as an HTML artifact
 
 The implementation follows the MCP stdio shape: newline-delimited JSON-RPC on
 stdin/stdout, no stdout logging, `initialize`, `tools/list`, `tools/call`,
