@@ -266,6 +266,13 @@ Store a self-contained HTML artifact, image artifact, or focused text artifact:
   --content "if payment.valid then enable(confirmButton)" \
   --summary "Payment button pseudocode" \
   --visibility internal
+
+./bin/decisions artifact add-text product.workflow.diagram \
+  --type text \
+  --extension .mmd \
+  --content $'flowchart TD\n  A[Start] --> B[Done]' \
+  --summary "Workflow Mermaid diagram" \
+  --visibility internal
 ```
 
 Artifacts are copied into `.decision-ledger/artifacts/...` and indexed through
@@ -278,6 +285,12 @@ free-form material attached to ledger subjects or records.
 Text/code-like artifacts are for focused snippets, pseudocode, markdown, JSON,
 YAML, or plain text when those forms express intent better than prose. They are
 not for ingesting full source trees or replacing the filesystem.
+
+Mermaid text artifacts are rendered by the live wiki when they use a `.mmd` or
+`.mermaid` extension, a Mermaid content type, direct Mermaid syntax, or fenced
+`mermaid` blocks inside markdown. Raw artifact downloads remain available at
+`/artifacts/<artifact_id>/content`; rendered diagrams are available at
+`/artifacts/<artifact_id>/render` and are embedded in dated subject views.
 
 Associate a record with an artifact:
 

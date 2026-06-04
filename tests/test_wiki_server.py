@@ -59,6 +59,26 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
         "--json",
     ) == 0
     artifact_id = json.loads(capsys.readouterr().out)["id"]
+    assert run_cli(
+        db_path,
+        "artifact",
+        "add-text",
+        "decision-ledger.live.initial",
+        "--type",
+        "text",
+        "--record-id",
+        first_record_id,
+        "--content",
+        "flowchart TD\n  A[Start] --> B[Done]",
+        "--extension",
+        ".mmd",
+        "--label",
+        "Mermaid flow",
+        "--visibility",
+        "internal",
+        "--json",
+    ) == 0
+    mermaid_artifact_id = json.loads(capsys.readouterr().out)["id"]
     paths = resolve_ledger_paths(db_path=db_path, cwd=tmp_path)
     conn = connect(db_path)
     try:
@@ -113,6 +133,7 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
         record_html = fetch(base_url, f"/records/{first_record_id}/index.html")
         assert "This record exists before the server starts." in record_html
         assert f"/artifacts/{artifact_id}/content" in record_html
+        assert f"/artifacts/{mermaid_artifact_id}/render" in record_html
 
         saved_view_html = fetch(base_url, f"/saved-views/{saved_view['id']}.html")
         assert "Open Live Decisions" in saved_view_html
@@ -122,10 +143,23 @@ def test_live_wiki_server_serves_current_ledger_without_static_export(tmp_path: 
         view_html = fetch(base_url, "/views/subjects/decision-ledger/live/index.html")
         assert "Initial live record" in view_html
         assert f'<iframe class="artifact-frame" src="/artifacts/{artifact_id}/content"' in view_html
+        assert f'<iframe class="artifact-frame" src="/artifacts/{mermaid_artifact_id}/render"' in view_html
 
         artifact_body, artifact_type = fetch_bytes(base_url, f"/artifacts/{artifact_id}/content")
         assert b"window.inlineOk=true" in artifact_body
         assert artifact_type.startswith("text/html")
+        mermaid_body, mermaid_type = fetch_bytes(base_url, f"/artifacts/{mermaid_artifact_id}/content")
+        assert b"flowchart TD" in mermaid_body
+        assert mermaid_type.startswith("text/plain")
+
+        mermaid_html = fetch(base_url, f"/artifacts/{mermaid_artifact_id}/render")
+        assert "Mermaid flow" in mermaid_html
+        assert "flowchart TD" in mermaid_html
+        assert "A[Start] --&gt; B[Done]" in mermaid_html
+        assert "/assets/mermaid-render.js" in mermaid_html
+
+        mermaid_js = fetch(base_url, "/assets/mermaid-render.js")
+        assert "cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs" in mermaid_js
 
         assert run_cli(
             db_path,

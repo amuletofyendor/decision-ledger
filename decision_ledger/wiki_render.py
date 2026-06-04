@@ -110,7 +110,85 @@ ul.tree li { margin: 4px 0; }
   border-radius: 6px;
   background: #fff;
 }
+.artifact-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 12px; }
+.mermaid-diagram {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 14px 0;
+  padding: 14px;
+  overflow: auto;
+}
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-status { color: var(--muted); }
+details.source { margin-top: 14px; }
 """.strip()
+
+MERMAID_RENDER_JS = """
+const diagrams = Array.from(document.querySelectorAll("pre.mermaid"));
+const status = document.querySelector("[data-mermaid-status]");
+
+if (diagrams.length > 0) {
+  if (status) {
+    status.textContent = "Rendering Mermaid diagrams...";
+  }
+  import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")
+    .then(({ default: mermaid }) => {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "default"
+      });
+      return mermaid.run({ nodes: diagrams });
+    })
+    .then(() => {
+      if (status) {
+        status.textContent = "Rendered Mermaid diagrams.";
+      }
+    })
+    .catch((error) => {
+      if (status) {
+        status.textContent = `Mermaid render failed: ${error.message}`;
+      }
+      for (const diagram of diagrams) {
+        diagram.classList.add("mermaid-render-error");
+      }
+    });
+}
+""".strip()
+
+MERMAID_CONTENT_TYPES = {"text/vnd.mermaid", "application/vnd.mermaid"}
+MERMAID_FILE_SUFFIXES = (".mmd", ".mermaid")
+MERMAID_DIRECTIVES = (
+    "architecture-beta",
+    "block-beta",
+    "c4component",
+    "c4container",
+    "c4context",
+    "classdiagram",
+    "erdiagram",
+    "flowchart",
+    "gantt",
+    "gitgraph",
+    "graph",
+    "journey",
+    "kanban",
+    "mindmap",
+    "packet-beta",
+    "pie",
+    "quadrantchart",
+    "radar-beta",
+    "requirementdiagram",
+    "sankey-beta",
+    "sequencediagram",
+    "statediagram",
+    "statediagram-v2",
+    "timeline",
+    "treemap-beta",
+    "venn-beta",
+    "xychart-beta",
+    "zenuml",
+)
 
 
 def records_for_wiki(
@@ -210,10 +288,15 @@ def render_artifacts(items: list[dict[str, Any]]) -> str:
     for item in items:
         label = item.get("label") or item.get("summary") or item["id"]
         link = f"/artifacts/{item['id']}/content"
+        render_link = (
+            f" · <a href=\"/artifacts/{h(item['id'])}/render\">Render diagram</a>"
+            if is_mermaid_artifact_metadata(item)
+            else ""
+        )
         meta = f"{item['content_type']} · {item['size_bytes']} bytes · {item['created_at']}"
         body.append(
             f"<li>{badge(item['type'])} <a href=\"{h(link)}\">{h(label)}</a>"
-            f"<div class=\"meta\">{h(meta)}</div></li>"
+            f"{render_link}<div class=\"meta\">{h(meta)}</div></li>"
         )
     body.append("</ul>")
     return "\n".join(body)
@@ -256,7 +339,8 @@ def validation_meta(record: dict[str, Any]) -> str:
     return f"<p class=\"meta\">Validation: {'; '.join(details)}</p>"
 
 
-def page(title: str, body: list[str], stylesheet_href: str) -> str:
+def page(title: str, body: list[str], stylesheet_href: str, scripts: list[str] | None = None) -> str:
+    script_tags = [f"<script type=\"module\" src=\"{h(src)}\"></script>" for src in scripts or []]
     return "\n".join(
         [
             "<!doctype html>",
@@ -274,6 +358,7 @@ def page(title: str, body: list[str], stylesheet_href: str) -> str:
             "<main>",
             *body,
             "</main>",
+            *script_tags,
             "</body>",
             "</html>",
             "",
@@ -287,3 +372,78 @@ def h(value: Any) -> str:
 
 def current_count(records: list[dict[str, Any]]) -> int:
     return len([record for record in records if record["status"] in CURRENT_STATUSES])
+
+
+def is_mermaid_artifact_metadata(artifact: dict[str, Any]) -> bool:
+    content_type = str(artifact.get("content_type") or "").split(";")[0].strip().lower()
+    if content_type in MERMAID_CONTENT_TYPES:
+        return True
+    names = [
+        artifact.get("storage_path"),
+        artifact.get("label"),
+        artifact.get("summary"),
+        artifact.get("source_uri"),
+    ]
+    return any(str(name or "").lower().endswith(MERMAID_FILE_SUFFIXES) for name in names)
+
+
+def mermaid_sources_from_text(text: str) -> list[str]:
+    fenced = mermaid_fenced_blocks(text)
+    if fenced:
+        return fenced
+    return [text] if is_mermaid_source(text) else []
+
+
+def mermaid_fenced_blocks(text: str) -> list[str]:
+    blocks: list[str] = []
+    in_mermaid = False
+    fence = ""
+    current: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not in_mermaid and (stripped.startswith("```") or stripped.startswith("~~~")):
+            marker = stripped[:3]
+            language = stripped[3:].strip().lower()
+            if language in {"mermaid", "{mermaid}", "mmd"}:
+                in_mermaid = True
+                fence = marker
+                current = []
+            continue
+        if in_mermaid and stripped.startswith(fence):
+            source = "\n".join(current).strip()
+            if source:
+                blocks.append(source)
+            in_mermaid = False
+            fence = ""
+            current = []
+            continue
+        if in_mermaid:
+            current.append(line)
+    return blocks
+
+
+def is_mermaid_source(text: str) -> bool:
+    directive = first_mermaid_directive(text)
+    if not directive:
+        return False
+    normalized = directive.lower()
+    return any(normalized == item or normalized.startswith(item + " ") for item in MERMAID_DIRECTIVES)
+
+
+def first_mermaid_directive(text: str) -> str:
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index < len(lines) and lines[index].strip() == "---":
+        index += 1
+        while index < len(lines) and lines[index].strip() != "---":
+            index += 1
+        if index < len(lines):
+            index += 1
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped and not stripped.startswith("%%"):
+            return stripped
+        index += 1
+    return ""

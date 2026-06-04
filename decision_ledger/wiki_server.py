@@ -14,11 +14,14 @@ from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerP
 from .model import CURRENT_STATUSES, OBSOLETE_STATUSES, now_iso
 from .repository import Ledger
 from .wiki_render import (
+    MERMAID_RENDER_JS,
     PROFILE_VISIBILITY,
     STYLESHEET_CSS,
     all_subject_prefixes,
     badge,
     direct_child_subjects,
+    is_mermaid_artifact_metadata,
+    mermaid_sources_from_text,
     h,
     page,
     records_for_wiki,
@@ -141,6 +144,8 @@ def render_request(
         return b'{"status":"ok"}\n', "application/json; charset=utf-8", HTTPStatus.OK
     if route == "/assets/styles.css":
         return stylesheet().encode("utf-8"), "text/css; charset=utf-8", HTTPStatus.OK
+    if route == "/assets/mermaid-render.js":
+        return MERMAID_RENDER_JS.encode("utf-8"), "text/javascript; charset=utf-8", HTTPStatus.OK
 
     with LiveLedger(paths) as ledger:
         records = records_for_live_view(
@@ -177,7 +182,7 @@ def render_request(
             subject = view_subject_from_route(route)
             if subject is None:
                 return not_found("View not found")
-            html = render_subject_view_page(root_subject, subject, records, profile)
+            html = render_subject_view_page(paths, root_subject, subject, records, profile)
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
         if route.startswith("/saved-views/"):
@@ -205,12 +210,20 @@ def render_request(
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
         if route.startswith("/artifacts/"):
-            artifact_id = artifact_id_from_route(route)
+            if route.endswith("/render"):
+                artifact_id = artifact_render_id_from_route(route)
+            else:
+                artifact_id = artifact_id_from_route(route)
             artifact = ledger.get_artifact(artifact_id)
             if not artifact or artifact["record_id"] not in visible_record_ids:
                 return not_found("Artifact not found")
             if artifact["export_visibility"] not in PROFILE_VISIBILITY[profile]:
                 return not_found("Artifact not found")
+            if route.endswith("/render"):
+                html = render_mermaid_artifact_page(paths, artifact)
+                if html is None:
+                    return not_found("Mermaid artifact not found")
+                return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
             return artifact_bytes(paths, artifact), artifact["content_type"], HTTPStatus.OK
 
     return not_found("Wiki page not found")
@@ -319,7 +332,7 @@ def render_subject_page(root_subject: str, subject: str, records: list[dict[str,
     return page(subject, body, "/assets/styles.css")
 
 
-def render_subject_view_page(root_subject: str, subject: str, records: list[dict[str, Any]], profile: str) -> str:
+def render_subject_view_page(paths: LedgerPaths, root_subject: str, subject: str, records: list[dict[str, Any]], profile: str) -> str:
     subtree = [
         record
         for record in records
@@ -357,6 +370,11 @@ def render_subject_view_page(root_subject: str, subject: str, records: list[dict
                 preview = f"<iframe class=\"artifact-frame\" src=\"{h(artifact_url_value)}\" title=\"{h(title)}\"></iframe>"
             elif artifact["content_type"].startswith("image/"):
                 preview = f"<img class=\"artifact-image\" src=\"{h(artifact_url_value)}\" alt=\"{h(title)}\">"
+            elif artifact_has_mermaid_preview(paths, artifact):
+                preview = (
+                    f"<iframe class=\"artifact-frame\" src=\"{h(artifact_render_url(artifact['id']))}\" "
+                    f"title=\"{h(title)}\"></iframe>"
+                )
             else:
                 preview = f"<a href=\"{h(artifact_url_value)}\">Open artifact</a>"
             body.append(
@@ -628,6 +646,10 @@ def artifact_id_from_route(route: str) -> str:
     return route.removeprefix("/artifacts/").removesuffix("/content").strip("/")
 
 
+def artifact_render_id_from_route(route: str) -> str:
+    return route.removeprefix("/artifacts/").removesuffix("/render").strip("/")
+
+
 def saved_view_id_from_route(route: str) -> str:
     return route.removeprefix("/saved-views/").removesuffix(".html").strip("/")
 
@@ -659,6 +681,66 @@ def record_url(record_id: str) -> str:
 
 def artifact_url(artifact_id: str) -> str:
     return f"/artifacts/{artifact_id}/content"
+
+
+def artifact_render_url(artifact_id: str) -> str:
+    return f"/artifacts/{artifact_id}/render"
+
+
+def render_mermaid_artifact_page(paths: LedgerPaths, artifact: dict[str, Any]) -> str | None:
+    sources = mermaid_sources_from_artifact(paths, artifact)
+    if not sources:
+        return None
+    title = artifact.get("label") or artifact.get("summary") or artifact["id"]
+    body = [
+        f"<p class=\"breadcrumb\"><a href=\"/\">wiki</a> / artifact / {h(artifact['id'])}</p>",
+        f"<p class=\"meta\">{h(artifact['subject'])} · {h(artifact['created_at'])}</p>",
+        "<p class=\"mermaid-status\" data-mermaid-status>Waiting to render Mermaid diagrams...</p>",
+        f"<p class=\"artifact-actions\"><a href=\"{h(artifact_url(artifact['id']))}\">Open raw source</a></p>",
+    ]
+    for index, source in enumerate(sources, start=1):
+        heading = f"<h2>Diagram {index}</h2>" if len(sources) > 1 else ""
+        body.append(
+            f"{heading}<section class=\"mermaid-diagram\">"
+            f"<pre class=\"mermaid\">{h(source)}</pre>"
+            "</section>"
+        )
+    raw_source = "\n\n".join(sources)
+    body.append(
+        "<details class=\"source\">"
+        "<summary>Source</summary>"
+        f"<pre>{h(raw_source)}</pre>"
+        "</details>"
+    )
+    return page(title, body, "/assets/styles.css", scripts=["/assets/mermaid-render.js"])
+
+
+def artifact_has_mermaid_preview(paths: LedgerPaths, artifact: dict[str, Any]) -> bool:
+    return bool(mermaid_sources_from_artifact(paths, artifact))
+
+
+def mermaid_sources_from_artifact(paths: LedgerPaths, artifact: dict[str, Any]) -> list[str]:
+    if not is_text_artifact(artifact):
+        return []
+    text = artifact_text(paths, artifact)
+    if text is None:
+        return []
+    sources = mermaid_sources_from_text(text)
+    if sources or is_mermaid_artifact_metadata(artifact):
+        return sources or [text]
+    return []
+
+
+def artifact_text(paths: LedgerPaths, artifact: dict[str, Any]) -> str | None:
+    try:
+        return artifact_bytes(paths, artifact).decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def is_text_artifact(artifact: dict[str, Any]) -> bool:
+    content_type = str(artifact.get("content_type") or "").lower()
+    return artifact["type"] in {"snippet", "pseudocode", "markdown", "json", "yaml", "text"} or content_type.startswith("text/")
 
 
 def artifact_bytes(paths: LedgerPaths, artifact: dict[str, Any]) -> bytes:
