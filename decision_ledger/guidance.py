@@ -19,6 +19,11 @@ Best practices:
   the record is current; validation_state answers how well the claim has been
   checked. Do not imply an accepted decision or active thought is validated
   unless its validation_state says so.
+- Use WIP items for temporal personal or work TODOs. Keep their open/closed
+  lifecycle and expected_by scheduling separate from durable record status and
+  validation. Quick-capture unscheduled work, then make it visible during triage.
+- Link WIP items to the durable records they implement, depend on, verify, or
+  otherwise need for context. Do not copy plans or evidence into task text.
 - Prefer validated records for audit-sensitive factual claims. Use unvalidated
   and partially_validated records for brainstorming and recall, but label that
   uncertainty when it matters.
@@ -111,6 +116,8 @@ CAPTURE_PROMPT = """Use Decision Ledger while working:
 14. Do not ingest whole codebases or drive implementation builds from the ledger.
    Capture focused intent and supporting artifacts, then leave source files and
    build execution to normal tools.
+15. Put personal and work TODOs in WIP. Capture first, add expected_by when known,
+   and link each task to the durable records that supply its plan or evidence.
 
 Do not delete audit history for normal forgetting. Supersede it and explain why.
 """
@@ -119,6 +126,11 @@ Do not delete audit history for normal forgetting. Supersede it and explain why.
 TOOL_GUIDANCE = {
     "decision_guidance": "Return the built-in Decision Ledger operating guidance. Call this when uncertain how to use the ledger.",
     "decision_rebuild_projection": "Rebuild the generated SQLite projection from canonical namespace JSONL event files. Use after pulling event changes from git or when SQLite is missing/stale.",
+    "decision_add_work_item": "Quick-capture a personal or work TODO. expected_by is structured but optional so an item can enter the unscheduled triage queue.",
+    "decision_update_work_item": "Schedule, edit, close, or reopen a WIP item while retaining its event history.",
+    "decision_list_work_items": "List the master WIP queue. Open items are returned by default; filter by personal/work, subject, expected date, or unscheduled state.",
+    "decision_show_work_item": "Show a WIP item with its durable-record links and audit events.",
+    "decision_link_work_item_record": "Link a temporal WIP item to the durable plan, decision, requirement, finding, or evidence-bearing record needed for context.",
     "decision_add_record": "Create a thought, idea, snag, decision, assumption, question, finding, plan, note, requirement, constraint, test case, UI note, or interface contract. Use for durable context the user may want to retrieve later.",
     "decision_add_evidence": "Attach evidence to an existing record. Prefer this for audit-worthy claims, live checks, source files, URLs, commands, and captured artifacts.",
     "decision_add_html_artifact": "Store a complete trusted HTML artifact with inline CSS/JavaScript allowed. Use for useful HTML-presented material the user or LLM wants to retain with ledger auditability.",

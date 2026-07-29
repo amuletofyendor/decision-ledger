@@ -160,9 +160,15 @@ def render_request(
             root_subject=root_subject,
             profile=profile,
         )
+        work_items = work_items_for_live_view(
+            ledger,
+            root_subject=root_subject,
+            profile=profile,
+        )
+        visible_work_item_ids = {item["id"] for item in work_items}
 
         if route in {"/", "/index.html"}:
-            html = render_index(root_subject, records, saved_views, profile)
+            html = render_index(root_subject, records, saved_views, work_items, profile)
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
         if route == "/assets/search-index.json":
@@ -199,6 +205,20 @@ def render_request(
                 if record["id"] in visible_record_ids
             ]
             html = render_saved_view_page(root_subject, saved_view, matching_records, profile)
+            return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
+
+        if route in {"/wip", "/wip/", "/wip/index.html"}:
+            html = render_wip_index(root_subject, work_items, profile)
+            return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
+
+        if route.startswith("/wip/"):
+            work_item_id = work_item_id_from_route(route)
+            if work_item_id not in visible_work_item_ids:
+                return not_found("WIP item not found")
+            item = ledger.get_work_item(work_item_id)
+            if item is None:
+                return not_found("WIP item not found")
+            html = render_work_item_page(item, visible_record_ids)
             return html.encode("utf-8"), "text/html; charset=utf-8", HTTPStatus.OK
 
         if route.startswith("/records/"):
@@ -279,12 +299,37 @@ def saved_views_for_live_view(
     ]
 
 
-def render_index(root_subject: str, records: list[dict[str, Any]], saved_views: list[dict[str, Any]], profile: str) -> str:
+def work_items_for_live_view(
+    ledger: Ledger,
+    *,
+    root_subject: str,
+    profile: str,
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in ledger.list_work_items(
+            subject=root_subject or None,
+            include_closed=True,
+            limit=10_000,
+        )
+        if item["export_visibility"] in PROFILE_VISIBILITY[profile]
+    ]
+
+
+def render_index(
+    root_subject: str,
+    records: list[dict[str, Any]],
+    saved_views: list[dict[str, Any]],
+    work_items: list[dict[str, Any]],
+    profile: str,
+) -> str:
     subjects = [record["subject"] for record in records]
     prefixes = sorted(subject_prefixes(root_subject, subjects)) if root_subject else sorted(all_subject_prefixes(subjects))
     current = len([record for record in records if record["status"] in CURRENT_STATUSES])
     obsolete = len([record for record in records if record["status"] in OBSOLETE_STATUSES])
     validated = len([record for record in records if record["validation_state"] == "validated"])
+    open_work = len([item for item in work_items if item["status"] == "open"])
+    unscheduled_work = len([item for item in work_items if item["status"] == "open" and not item.get("expected_by")])
     title = "Decision Ledger Wiki" if not root_subject else f"Decision Ledger Wiki: {root_subject}"
     body = [
         f"<p class=\"meta\">Live view. Profile: {h(profile)}. Generated: {h(now_iso())}.</p>",
@@ -294,9 +339,12 @@ def render_index(root_subject: str, records: list[dict[str, Any]], saved_views: 
         stat_card("Current", str(current)),
         stat_card("Obsolete", str(obsolete)),
         stat_card("Validated", str(validated)),
+        stat_card("Open WIP", str(open_work)),
+        stat_card("Unscheduled WIP", str(unscheduled_work)),
         "</div>",
         "<h2>Indexes</h2>",
         "<ul>",
+        f"<li><a href=\"/wip/index.html\">WIP master list</a> ({open_work} open)</li>",
         "<li><a href=\"/assets/search-index.json\">Search index JSON</a></li>",
         "<li><a href=\"/assets/graph.json\">Graph JSON</a></li>",
         "</ul>",
@@ -442,6 +490,83 @@ def render_saved_view_record_artifacts(record: dict[str, Any]) -> str:
     return "<h3>Artifacts</h3><ul class=\"clean\">" + "\n".join(items) + "</ul>"
 
 
+def render_wip_index(root_subject: str, work_items: list[dict[str, Any]], profile: str) -> str:
+    open_items = [item for item in work_items if item["status"] == "open"]
+    scheduled = [item for item in open_items if item.get("expected_by")]
+    unscheduled = [item for item in open_items if not item.get("expected_by")]
+    closed = [item for item in work_items if item["status"] == "closed"]
+    body = [
+        "<p class=\"breadcrumb\"><a href=\"/\">wiki</a> / WIP</p>",
+        f"<p class=\"meta\">Root: {h(root_subject or '(all)')}. Profile: {h(profile)}. "
+        f"Open: {len(open_items)}. Closed: {len(closed)}.</p>",
+        "<h2>Expected</h2>",
+        render_work_item_list(scheduled),
+        "<h2>Unscheduled Inbox</h2>",
+        render_work_item_list(unscheduled),
+        "<h2>Closed</h2>",
+        render_work_item_list(closed),
+    ]
+    return page("WIP Master List", body, "/assets/styles.css")
+
+
+def render_work_item_list(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "<p class=\"empty\">none</p>"
+    body = []
+    for item in items:
+        classes = "record obsolete" if item["status"] == "closed" else "record"
+        body.append(
+            f"<div class=\"{classes}\">"
+            f"<div>{badge(item['area'])}{badge(item['status'], 'status')}</div>"
+            f"<a href=\"{h(work_item_url(item['id']))}\"><strong>{h(item['title'])}</strong></a>"
+            f"<div class=\"meta\">Expected: {h(item.get('expected_by') or 'unscheduled')} · "
+            f"{h(item['subject'])}</div>"
+            "</div>"
+        )
+    return "\n".join(body)
+
+
+def render_work_item_page(item: dict[str, Any], visible_record_ids: set[str]) -> str:
+    body = [
+        "<p class=\"breadcrumb\"><a href=\"/\">wiki</a> / "
+        "<a href=\"/wip/index.html\">WIP</a></p>",
+        f"<div>{badge(item['area'])}{badge(item['status'], 'status')}{badge(item['export_visibility'])}</div>",
+        f"<p><strong>{h(item['title'])}</strong></p>",
+        f"<p class=\"meta\">Subject: <code>{h(item['subject'])}</code>. "
+        f"Expected: {h(item.get('expected_by') or 'unscheduled')}. "
+        f"Created: {h(item['created_at'])}"
+        + (f" by {h(item['created_by'])}" if item.get("created_by") else "")
+        + "</p>",
+    ]
+    if item.get("body"):
+        body.append(f"<pre class=\"body\">{h(item['body'])}</pre>")
+    if item.get("closed_at"):
+        body.append(
+            f"<p class=\"meta\">Closed: {h(item['closed_at'])}"
+            + (f" by {h(item['closed_by'])}" if item.get("closed_by") else "")
+            + "</p>"
+        )
+    body.extend(["<h2>Durable Record Links</h2>", render_work_item_record_links(item["record_links"], visible_record_ids)])
+    body.extend(["<h2>Events</h2>", render_events(item["events"])])
+    return page(item["title"], body, "/assets/styles.css")
+
+
+def render_work_item_record_links(items: list[dict[str, Any]], visible_record_ids: set[str]) -> str:
+    if not items:
+        return "<p class=\"empty\">none</p>"
+    body = ["<ul class=\"clean\">"]
+    for item in items:
+        label = item.get("record_summary") or item["record_id"]
+        if item["record_id"] in visible_record_ids:
+            target = f"<a href=\"{h(record_url(item['record_id']))}\">{h(label)}</a>"
+        else:
+            target = f"<code>{h(item['record_id'])}</code>"
+        note = f"<div class=\"meta\">{h(item['note'])}</div>" if item.get("note") else ""
+        body.append(f"<li>{badge(item['relation'])} → {target}{note}</li>")
+    body.append("</ul>")
+    return "\n".join(body)
+
+
 def render_record_page(record: dict[str, Any], visible_record_ids: set[str]) -> str:
     body = [
         f"<p class=\"breadcrumb\"><a href=\"/\">wiki</a> / "
@@ -476,8 +601,24 @@ def render_record_page(record: dict[str, Any], visible_record_ids: set[str]) -> 
     body.extend(["<h2>Evidence</h2>", render_evidence(record["evidence"])])
     body.extend(["<h2>Associations Out</h2>", render_associations(record["associations_out"], visible_record_ids, "->")])
     body.extend(["<h2>Associations In</h2>", render_associations(record["associations_in"], visible_record_ids, "<-")])
+    body.extend(["<h2>WIP Links</h2>", render_record_work_items(record.get("work_items", []))])
     body.extend(["<h2>Events</h2>", render_events(record["events"])])
     return page(record.get("summary") or record["id"], body, "/assets/styles.css")
+
+
+def render_record_work_items(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "<p class=\"empty\">none</p>"
+    body = ["<ul class=\"clean\">"]
+    for item in items:
+        body.append(
+            f"<li>{badge(item['area'])}{badge(item['status'], 'status')} "
+            f"<a href=\"{h(work_item_url(item['work_item_id']))}\">{h(item['title'])}</a>"
+            f"<div class=\"meta\">{h(item['relation'])} · expected "
+            f"{h(item.get('expected_by') or 'unscheduled')}</div></li>"
+        )
+    body.append("</ul>")
+    return "\n".join(body)
 
 
 def render_subject_list(subjects: list[str]) -> str:
@@ -642,6 +783,10 @@ def record_id_from_route(route: str) -> str:
     return route.removeprefix("/records/").removesuffix("/index.html").strip("/")
 
 
+def work_item_id_from_route(route: str) -> str:
+    return route.removeprefix("/wip/").removesuffix("/index.html").strip("/")
+
+
 def artifact_id_from_route(route: str) -> str:
     return route.removeprefix("/artifacts/").removesuffix("/content").strip("/")
 
@@ -677,6 +822,10 @@ def saved_view_url(view_id: str) -> str:
 
 def record_url(record_id: str) -> str:
     return f"/records/{record_id}/index.html"
+
+
+def work_item_url(work_item_id: str) -> str:
+    return f"/wip/{work_item_id}/index.html"
 
 
 def artifact_url(artifact_id: str) -> str:

@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Any
 
-from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, CURRENT_STATUSES, OBSOLETE_STATUSES, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, new_id, now_iso, parse_datetime
+from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, CURRENT_STATUSES, OBSOLETE_STATUSES, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, WIP_AREAS, WIP_STATUSES, new_id, now_iso, parse_datetime, parse_expected_by
 from .vector_search import (
     Embedder,
     rebuild_record_vectors,
@@ -671,6 +671,125 @@ class Ledger:
             "entries": entries,
         }
 
+    def list_work_items(
+        self,
+        *,
+        area: str | None = None,
+        subject: str | None = None,
+        status: str | None = None,
+        include_closed: bool = False,
+        expected_from: str | None = None,
+        expected_to: str | None = None,
+        unscheduled: bool = False,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if area:
+            validate_wip_area(area)
+            clauses.append("area = ?")
+            params.append(area)
+        if subject:
+            clauses.append("(subject = ? OR subject LIKE ?)")
+            params.extend([subject, f"{subject}.%"])
+        if status:
+            validate_wip_status(status)
+            clauses.append("status = ?")
+            params.append(status)
+        elif not include_closed:
+            clauses.append("status = 'open'")
+        if expected_from:
+            normalized_from = parse_expected_by(expected_from)
+            clauses.append("substr(expected_by, 1, 10) >= ?" if len(normalized_from) == 10 else "expected_by >= ?")
+            params.append(normalized_from)
+        if expected_to:
+            normalized_to = parse_expected_by(expected_to)
+            clauses.append("substr(expected_by, 1, 10) <= ?" if len(normalized_to) == 10 else "expected_by <= ?")
+            params.append(normalized_to)
+        if unscheduled:
+            clauses.append("expected_by IS NULL")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        rows = self.conn.execute(
+            f"""
+            SELECT id, area, subject, title, body, status, expected_by, created_at, created_by,
+                   updated_at, closed_at, closed_by, export_visibility
+            FROM work_items
+            {where}
+            ORDER BY
+              CASE status WHEN 'open' THEN 0 ELSE 1 END,
+              expected_by IS NULL,
+              expected_by,
+              created_at,
+              id
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_work_item(self, work_item_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, area, subject, title, body, status, expected_by, created_at, created_by,
+                   updated_at, closed_at, closed_by, export_visibility
+            FROM work_items
+            WHERE id = ?
+            """,
+            (work_item_id,),
+        ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["record_links"] = [
+            dict(link)
+            for link in self.conn.execute(
+                """
+                SELECT l.id, l.record_id, l.relation, l.note, l.created_at, l.created_by,
+                       r.subject AS record_subject, r.kind AS record_kind,
+                       r.status AS record_status, r.summary AS record_summary
+                FROM work_item_record_links l
+                JOIN records r ON r.id = l.record_id
+                WHERE l.work_item_id = ?
+                ORDER BY l.created_at, l.id
+                """,
+                (work_item_id,),
+            )
+        ]
+        item["events"] = [
+            dict(event)
+            for event in self.conn.execute(
+                """
+                SELECT event_type, event_at, event_by, note, payload_json
+                FROM work_item_events
+                WHERE work_item_id = ?
+                ORDER BY event_at, id
+                """,
+                (work_item_id,),
+            )
+        ]
+        return item
+
+    def work_items_for_records(self, record_ids: list[str]) -> list[sqlite3.Row]:
+        if not record_ids:
+            return []
+        placeholders = ",".join("?" for _ in record_ids)
+        return self.conn.execute(
+            f"""
+            SELECT l.id AS link_id, l.record_id, l.work_item_id, l.relation, l.note,
+                   w.area, w.subject, w.title, w.status, w.expected_by, w.export_visibility
+            FROM work_item_record_links l
+            JOIN work_items w ON w.id = l.work_item_id
+            WHERE l.record_id IN ({placeholders})
+            ORDER BY
+              CASE w.status WHEN 'open' THEN 0 ELSE 1 END,
+              w.expected_by IS NULL,
+              w.expected_by,
+              w.created_at
+            """,
+            record_ids,
+        ).fetchall()
+
     def list_saved_views(
         self,
         *,
@@ -748,6 +867,7 @@ class Ledger:
                     (record_id,),
                 )
             ],
+            "work_items": [dict(item) for item in self.work_items_for_records([record_id])],
             "events": [
                 dict(item)
                 for item in self.conn.execute(
@@ -1170,6 +1290,18 @@ def validate_record_status(status: str) -> None:
     if status not in RECORD_STATUSES:
         allowed = ", ".join(RECORD_STATUSES)
         raise ValueError(f"unknown record status: {status}; expected one of {allowed}")
+
+
+def validate_wip_area(area: str) -> None:
+    if area not in WIP_AREAS:
+        allowed = ", ".join(WIP_AREAS)
+        raise ValueError(f"unknown WIP area: {area}; expected one of {allowed}")
+
+
+def validate_wip_status(status: str) -> None:
+    if status not in WIP_STATUSES:
+        allowed = ", ".join(WIP_STATUSES)
+        raise ValueError(f"unknown WIP status: {status}; expected one of {allowed}")
 
 
 def validate_artifact_type(artifact_type: str) -> None:

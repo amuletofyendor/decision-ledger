@@ -13,7 +13,7 @@ from . import __version__
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
 from .guidance import CAPTURE_PROMPT, SERVER_INSTRUCTIONS, TOOL_GUIDANCE
-from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, json_dumps
+from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, WIP_AREAS, WIP_STATUSES, json_dumps
 
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -159,6 +159,113 @@ def build_tools(ledger: EventedLedger) -> dict[str, tuple[JsonObject, ToolHandle
                 },
             ),
             lambda args: rebuild_projection_tool(ledger, skip_vectors=bool(args.get("skip_vectors", False))),
+        ),
+        "decision_add_work_item": (
+            tool_definition(
+                "decision_add_work_item",
+                "Add WIP Item",
+                TOOL_GUIDANCE["decision_add_work_item"],
+                {
+                    "title": string_schema("Short actionable TODO title."),
+                    "area": enum_schema(list(WIP_AREAS), "Personal or work area."),
+                    "subject": string_schema("Optional ledger subject. Defaults to wip.<area> for quick capture."),
+                    "body": string_schema("Optional detail needed to resume the task."),
+                    "expected_by": string_schema("Optional ISO 8601 date or timezone-aware datetime."),
+                    "created_by": string_schema("Human or agent creating the WIP item."),
+                    "visibility": enum_schema(["private", "internal", "shareable", "public"], "Export visibility."),
+                },
+                required=["title", "area"],
+            ),
+            lambda args: {"id": ledger.add_work_item(
+                area=require_str(args, "area"),
+                subject=args.get("subject") or f"wip.{require_str(args, 'area')}",
+                title=require_str(args, "title"),
+                body=args.get("body"),
+                expected_by=args.get("expected_by"),
+                created_by=args.get("created_by"),
+                export_visibility=args.get("visibility", "private"),
+            )},
+        ),
+        "decision_update_work_item": (
+            tool_definition(
+                "decision_update_work_item",
+                "Update WIP Item",
+                TOOL_GUIDANCE["decision_update_work_item"],
+                {
+                    "work_item_id": string_schema("WIP item id."),
+                    "area": enum_schema(list(WIP_AREAS), "New personal or work area."),
+                    "subject": string_schema("New ledger subject."),
+                    "title": string_schema("New actionable title."),
+                    "body": string_schema("New task detail."),
+                    "status": enum_schema(list(WIP_STATUSES), "Open or closed status."),
+                    "expected_by": string_schema("New ISO 8601 date or timezone-aware datetime."),
+                    "clear_expected_by": {"type": "boolean", "description": "Clear expected_by and return the item to the unscheduled queue."},
+                    "visibility": enum_schema(["private", "internal", "shareable", "public"], "New export visibility."),
+                    "note": string_schema("Audit note explaining the update."),
+                    "updated_by": string_schema("Human or agent updating the item."),
+                },
+                required=["work_item_id"],
+            ),
+            lambda args: update_work_item_tool(ledger, args),
+        ),
+        "decision_list_work_items": (
+            tool_definition(
+                "decision_list_work_items",
+                "List WIP Items",
+                TOOL_GUIDANCE["decision_list_work_items"],
+                {
+                    "area": enum_schema(list(WIP_AREAS), "Optional personal or work filter."),
+                    "subject": string_schema("Optional ledger subject prefix."),
+                    "status": enum_schema(list(WIP_STATUSES), "Optional exact status."),
+                    "include_closed": {"type": "boolean", "description": "Include closed items when no exact status is supplied."},
+                    "expected_from": string_schema("Optional lower expected_by bound."),
+                    "expected_to": string_schema("Optional upper expected_by bound."),
+                    "unscheduled": {"type": "boolean", "description": "Only return items without expected_by."},
+                    "limit": {"type": "integer", "description": "Maximum result count."},
+                },
+            ),
+            lambda args: {"result": ledger.list_work_items(
+                area=args.get("area"),
+                subject=args.get("subject"),
+                status=args.get("status"),
+                include_closed=bool(args.get("include_closed", False)),
+                expected_from=args.get("expected_from"),
+                expected_to=args.get("expected_to"),
+                unscheduled=bool(args.get("unscheduled", False)),
+                limit=int(args.get("limit", 200)),
+            )},
+        ),
+        "decision_show_work_item": (
+            tool_definition(
+                "decision_show_work_item",
+                "Show WIP Item",
+                TOOL_GUIDANCE["decision_show_work_item"],
+                {"work_item_id": string_schema("WIP item id.")},
+                required=["work_item_id"],
+            ),
+            lambda args: require_work_item_result(ledger, require_str(args, "work_item_id")),
+        ),
+        "decision_link_work_item_record": (
+            tool_definition(
+                "decision_link_work_item_record",
+                "Link WIP Item To Record",
+                TOOL_GUIDANCE["decision_link_work_item_record"],
+                {
+                    "work_item_id": string_schema("WIP item id."),
+                    "record_id": string_schema("Durable ledger record id."),
+                    "relation": enum_schema([item for item in ASSOCIATION_RELATIONS if item != "supersedes"], "Relation from the WIP item to the record."),
+                    "note": string_schema("Why this record matters to the task."),
+                    "created_by": string_schema("Human or agent creating the link."),
+                },
+                required=["work_item_id", "record_id"],
+            ),
+            lambda args: {"id": ledger.link_work_item_record(
+                work_item_id=require_str(args, "work_item_id"),
+                record_id=require_str(args, "record_id"),
+                relation=args.get("relation", "associated_with"),
+                note=args.get("note"),
+                created_by=args.get("created_by"),
+            )},
         ),
         "decision_add_record": (
             tool_definition(
@@ -909,6 +1016,31 @@ def render_query_view_html(title: str, records: list[dict[str, Any]], query_args
 
 def html_escape(value: Any) -> str:
     return escape("" if value is None else str(value), quote=True)
+
+
+def update_work_item_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:
+    changes: dict[str, Any] = {
+        field: args[field]
+        for field in ("area", "subject", "title", "body", "status", "expected_by")
+        if field in args
+    }
+    if bool(args.get("clear_expected_by", False)):
+        changes["expected_by"] = None
+    if "visibility" in args:
+        changes["export_visibility"] = args["visibility"]
+    return ledger.update_work_item(
+        work_item_id=require_str(args, "work_item_id"),
+        changes=changes,
+        updated_by=args.get("updated_by"),
+        note=args.get("note"),
+    )
+
+
+def require_work_item_result(ledger: EventedLedger, work_item_id: str) -> JsonObject:
+    item = ledger.get_work_item(work_item_id)
+    if item is None:
+        raise ValueError(f"work item not found: {work_item_id}")
+    return item
 
 
 def require_record_result(ledger: EventedLedger, record_id: str) -> JsonObject:

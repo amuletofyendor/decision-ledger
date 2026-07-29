@@ -75,6 +75,8 @@ Import the decisions and snags from this markdown plan into the ledger.
 Mark decisions under subject X from before 11am as superseded by this new record.
 Store this HTML page or screenshot as an artifact under subject Z.
 Store this pseudocode as a focused artifact and associate it with requirement X.
+Add "book the boiler service" to my personal WIP inbox, then show unscheduled TODOs.
+Add a work TODO expected by Friday and link it to the implementation plan.
 Show coverage gaps under subject Y.
 Save a reusable view of all open snags and make it appear in the wiki.
 Serve the top-level wiki for me on a free localhost port.
@@ -87,6 +89,9 @@ Serve the top-level wiki for me on a free localhost port.
   notes, and interface contracts.
 - Organize records in a dot-separated subject tree, so an agent can gather
   context for one namespace or browse all top-level topics.
+- Maintain a separate temporal WIP master list for personal and work TODOs,
+  with open/closed status, optional `expected_by` scheduling, an unscheduled
+  inbox, audit history, and typed links to durable records.
 - Preserve audit history through append-only JSONL events, while using SQLite
   as a generated projection for fast queries.
 - Attach evidence to records, including files, URLs, commands, tickets, logs,
@@ -145,6 +150,9 @@ The core idea is:
 - Evidence links make claims inspectable.
 - Validation state distinguishes checked claims from unvalidated ideas.
 - Associations form a graph across records when namespace alone is not enough.
+- WIP stays separate from durable record lifecycle and validation, while links
+  connect tasks to plans, decisions, requirements, findings, and evidence-bearing
+  records.
 - `decision-wiki-server` makes the live namespace tree browsable on demand.
 - Markdown remains a readable projection, not the source of truth.
 
@@ -331,6 +339,29 @@ Set validation state separately from lifecycle status:
 - `contested`: credible evidence or review challenges it
 - `invalidated`: evidence shows it should not be treated as true
 
+Use WIP as the temporal master TODO list. Quick capture only needs a title and
+an area; items without `expected_by` remain visible in the unscheduled inbox:
+
+```bash
+./bin/decisions wip add "Book the boiler service" --area personal
+./bin/decisions wip add "Publish the API release" \
+  --area work \
+  --subject connected-ai.release \
+  --expected-by 2026-08-01
+
+./bin/decisions wip list
+./bin/decisions wip list --unscheduled
+./bin/decisions wip update wip_... --expected-by 2026-08-15
+./bin/decisions wip link wip_... rec_... \
+  --relation implements \
+  --note "The record contains the durable release plan and evidence"
+./bin/decisions wip close wip_...
+```
+
+`expected_by` accepts an ISO 8601 date or a timezone-aware datetime. Reopening
+and rescheduling are audited events. The live wiki exposes the master list at
+`/wip/index.html` and shows WIP backlinks on linked record pages.
+
 Attach evidence:
 
 ```bash
@@ -465,6 +496,11 @@ The MCP server exposes tools for:
 
 - `decision_guidance`
 - `decision_rebuild_projection`
+- `decision_add_work_item`
+- `decision_update_work_item`
+- `decision_list_work_items`
+- `decision_show_work_item`
+- `decision_link_work_item_record`
 - `decision_add_record`
 - `decision_add_evidence`
 - `decision_add_html_artifact`
@@ -501,6 +537,9 @@ The MCP surface deliberately bakes in usage guidance:
 - gather current subject context before making durable claims
 - prefer current records for reasoning
 - keep lifecycle status separate from validation state
+- use WIP for temporal personal/work TODOs, including unscheduled quick capture
+  and expected-by triage, while keeping durable record lifecycle separate
+- link WIP items to the durable records that carry plans, intent, or evidence
 - prefer validated records for audit-sensitive factual claims
 - label uncertainty when relying on unvalidated or partially validated records
 - treat superseded records as audit history unless explicitly requested

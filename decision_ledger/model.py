@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 
@@ -44,6 +44,8 @@ ASSOCIATION_RELATIONS = (
     "illustrates",
 )
 VALIDATION_STATES = ("unvalidated", "partially_validated", "validated", "contested", "invalidated")
+WIP_AREAS = ("personal", "work")
+WIP_STATUSES = ("open", "closed")
 SYMMETRIC_RELATIONS = {"associated_with", "duplicates"}
 
 
@@ -64,6 +66,25 @@ def parse_datetime(value: str) -> str:
         return datetime.fromisoformat(normalized).astimezone().isoformat(timespec="seconds")
     except ValueError:
         return value
+
+
+def parse_expected_by(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("expected_by cannot be empty")
+    try:
+        return date.fromisoformat(normalized).isoformat()
+    except ValueError:
+        pass
+    if " " in normalized and "T" not in normalized:
+        normalized = normalized.replace(" ", "T", 1)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("expected_by must be an ISO 8601 date or datetime") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("expected_by datetime must include a timezone; use a date for day-level expectations")
+    return parsed.astimezone().isoformat(timespec="seconds")
 
 
 def rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:

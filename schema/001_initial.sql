@@ -155,6 +155,80 @@ CREATE INDEX IF NOT EXISTS idx_saved_views_subject ON saved_views(subject);
 CREATE INDEX IF NOT EXISTS idx_saved_views_created_at ON saved_views(created_at);
 CREATE INDEX IF NOT EXISTS idx_saved_views_visibility ON saved_views(export_visibility);
 
+CREATE TABLE IF NOT EXISTS work_items (
+  id TEXT PRIMARY KEY,
+  area TEXT NOT NULL CHECK (
+    area IN ('personal', 'work')
+  ),
+  subject TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (
+    status IN ('open', 'closed')
+  ),
+  expected_by TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  updated_at TEXT NOT NULL,
+  closed_at TEXT,
+  closed_by TEXT,
+  export_visibility TEXT NOT NULL DEFAULT 'private' CHECK (
+    export_visibility IN ('private', 'internal', 'shareable', 'public')
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_items_area ON work_items(area);
+CREATE INDEX IF NOT EXISTS idx_work_items_subject ON work_items(subject);
+CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status);
+CREATE INDEX IF NOT EXISTS idx_work_items_expected_by ON work_items(expected_by);
+
+CREATE TABLE IF NOT EXISTS work_item_record_links (
+  id TEXT PRIMARY KEY,
+  work_item_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+  record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+  relation TEXT NOT NULL CHECK (
+    relation IN (
+      'associated_with',
+      'supports',
+      'contradicts',
+      'depends_on',
+      'derived_from',
+      'duplicates',
+      'clarifies',
+      'blocks',
+      'implements',
+      'raises_question',
+      'answers_question',
+      'verifies',
+      'constrains',
+      'illustrates'
+    )
+  ),
+  note TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  UNIQUE (work_item_id, record_id, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_item_record_links_work_item ON work_item_record_links(work_item_id);
+CREATE INDEX IF NOT EXISTS idx_work_item_record_links_record ON work_item_record_links(record_id);
+CREATE INDEX IF NOT EXISTS idx_work_item_record_links_relation ON work_item_record_links(relation);
+
+CREATE TABLE IF NOT EXISTS work_item_events (
+  id TEXT PRIMARY KEY,
+  work_item_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL CHECK (
+    event_type IN ('created', 'updated', 'linked')
+  ),
+  event_at TEXT NOT NULL,
+  event_by TEXT,
+  note TEXT,
+  payload_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_item_events_work_item ON work_item_events(work_item_id);
+CREATE INDEX IF NOT EXISTS idx_work_item_events_event_at ON work_item_events(event_at);
+
 CREATE TABLE IF NOT EXISTS record_associations (
   id TEXT PRIMARY KEY,
   from_record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,

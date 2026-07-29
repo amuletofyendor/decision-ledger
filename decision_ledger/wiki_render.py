@@ -220,6 +220,11 @@ def records_for_wiki(
                 for item in record.get("artifacts", [])
                 if item["export_visibility"] in PROFILE_VISIBILITY[profile]
             ]
+            record["work_items"] = [
+                item
+                for item in record.get("work_items", [])
+                if item["export_visibility"] in PROFILE_VISIBILITY[profile]
+            ]
             records.append(record)
     return sorted(records, key=lambda item: (item["subject"], item["created_at"], item["id"]))
 

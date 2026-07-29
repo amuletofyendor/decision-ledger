@@ -11,8 +11,17 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .db import connect
-from .model import new_id, now_iso, parse_datetime
-from .repository import Ledger, validate_artifact_association_relation, validate_artifact_type, validate_association_relation, validate_record_kind, validate_validation_state
+from .model import new_id, now_iso, parse_datetime, parse_expected_by
+from .repository import (
+    Ledger,
+    validate_artifact_association_relation,
+    validate_artifact_type,
+    validate_association_relation,
+    validate_record_kind,
+    validate_validation_state,
+    validate_wip_area,
+    validate_wip_status,
+)
 
 
 DEFAULT_LEDGER_HOME = Path.home() / ".decision-ledger"
@@ -75,23 +84,32 @@ class EventStore:
         *,
         subject: str,
         event_type: str,
-        record_id: str,
+        record_id: str | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
         payload: dict[str, Any],
         created_by: str | None = None,
         note: str | None = None,
         event_id: str | None = None,
         created_at: str | None = None,
     ) -> dict[str, Any]:
+        resolved_entity_id = entity_id or record_id
+        if resolved_entity_id is None:
+            raise ValueError("event entity id is required")
         event = {
             "event_id": event_id or new_id("evt"),
             "event_type": event_type,
-            "record_id": record_id,
             "subject": subject,
             "created_at": created_at or event_now_iso(),
             "created_by": created_by,
             "note": note,
             "payload": payload,
         }
+        if entity_type is not None:
+            event["entity_type"] = entity_type
+            event["entity_id"] = resolved_entity_id
+        if record_id is not None:
+            event["record_id"] = record_id
         path = self.event_path(subject)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
@@ -429,6 +447,131 @@ class EventedLedger:
         self.conn.commit()
         return association_id
 
+    def add_work_item(
+        self,
+        *,
+        area: str,
+        subject: str,
+        title: str,
+        body: str | None = None,
+        expected_by: str | None = None,
+        created_by: str | None = None,
+        export_visibility: str = "private",
+    ) -> str:
+        validate_wip_area(area)
+        normalized_title = title.strip()
+        if not normalized_title:
+            raise ValueError("work item title is required")
+        work_item_id = new_id("wip")
+        created_at = now_iso()
+        event = self.event_store.append(
+            subject=subject,
+            event_type="work_item_created",
+            entity_type="work_item",
+            entity_id=work_item_id,
+            created_by=created_by,
+            payload={
+                "work_item_id": work_item_id,
+                "area": area,
+                "title": normalized_title,
+                "body": body,
+                "status": "open",
+                "expected_by": parse_expected_by(expected_by) if expected_by else None,
+                "created_at": created_at,
+                "created_by": created_by,
+                "export_visibility": export_visibility,
+            },
+        )
+        apply_event(self.conn, event)
+        self.conn.commit()
+        return work_item_id
+
+    def update_work_item(
+        self,
+        *,
+        work_item_id: str,
+        changes: dict[str, Any],
+        updated_by: str | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        work_item = self.projection.get_work_item(work_item_id)
+        if work_item is None:
+            raise ValueError(f"work item not found: {work_item_id}")
+        allowed = {"area", "subject", "title", "body", "status", "expected_by", "export_visibility"}
+        unknown = sorted(set(changes) - allowed)
+        if unknown:
+            raise ValueError(f"unknown work item fields: {', '.join(unknown)}")
+        if not changes:
+            raise ValueError("at least one work item field must be updated")
+        normalized = dict(changes)
+        if "area" in normalized:
+            validate_wip_area(normalized["area"])
+        if "status" in normalized:
+            validate_wip_status(normalized["status"])
+        if "title" in normalized:
+            normalized["title"] = str(normalized["title"]).strip()
+            if not normalized["title"]:
+                raise ValueError("work item title is required")
+        if "subject" in normalized:
+            normalized["subject"] = str(normalized["subject"]).strip()
+            if not normalized["subject"]:
+                raise ValueError("work item subject is required")
+        if normalized.get("expected_by"):
+            normalized["expected_by"] = parse_expected_by(normalized["expected_by"])
+        event_subject = normalized.get("subject", work_item["subject"])
+        event = self.event_store.append(
+            subject=event_subject,
+            event_type="work_item_updated",
+            entity_type="work_item",
+            entity_id=work_item_id,
+            created_by=updated_by,
+            note=note,
+            payload={
+                "work_item_id": work_item_id,
+                "changes": normalized,
+                "updated_by": updated_by,
+            },
+        )
+        apply_event(self.conn, event)
+        self.conn.commit()
+        updated = self.projection.get_work_item(work_item_id)
+        assert updated is not None
+        return updated
+
+    def link_work_item_record(
+        self,
+        *,
+        work_item_id: str,
+        record_id: str,
+        relation: str = "associated_with",
+        note: str | None = None,
+        created_by: str | None = None,
+    ) -> str:
+        work_item = self.projection.get_work_item(work_item_id)
+        if work_item is None:
+            raise ValueError(f"work item not found: {work_item_id}")
+        self.projection.require_record(record_id)
+        validate_artifact_association_relation(relation)
+        link_id = new_id("lnk")
+        event = self.event_store.append(
+            subject=work_item["subject"],
+            event_type="work_item_record_linked",
+            entity_type="work_item",
+            entity_id=work_item_id,
+            created_by=created_by,
+            note=note,
+            payload={
+                "link_id": link_id,
+                "work_item_id": work_item_id,
+                "record_id": record_id,
+                "relation": relation,
+                "note": note,
+            },
+        )
+        apply_event(self.conn, event)
+        self.conn.commit()
+        return link_id
+
     def supersede_record(
         self,
         *,
@@ -545,6 +688,12 @@ def apply_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
         apply_superseded(conn, event)
     elif event_type == "validation_changed":
         apply_validation_changed(conn, event)
+    elif event_type == "work_item_created":
+        apply_work_item_created(conn, event)
+    elif event_type == "work_item_updated":
+        apply_work_item_updated(conn, event)
+    elif event_type == "work_item_record_linked":
+        apply_work_item_record_linked(conn, event)
     else:
         raise ValueError(f"unknown event type: {event_type}")
 
@@ -774,6 +923,128 @@ def apply_validation_changed(conn: sqlite3.Connection, event: dict[str, Any]) ->
         ),
     )
     insert_projection_event(conn, event, "validation_changed")
+
+
+def apply_work_item_created(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
+    payload = event["payload"]
+    validate_wip_area(payload["area"])
+    validate_wip_status(payload.get("status", "open"))
+    expected_by = parse_expected_by(payload["expected_by"]) if payload.get("expected_by") else None
+    created_at = payload.get("created_at") or event["created_at"]
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO work_items (
+          id, area, subject, title, body, status, expected_by, created_at, created_by,
+          updated_at, export_visibility
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload["work_item_id"],
+            payload["area"],
+            event["subject"],
+            payload["title"],
+            payload.get("body"),
+            payload.get("status", "open"),
+            expected_by,
+            created_at,
+            payload.get("created_by") or event.get("created_by"),
+            created_at,
+            payload.get("export_visibility", "private"),
+        ),
+    )
+    insert_work_item_projection_event(conn, event, "created")
+
+
+def apply_work_item_updated(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
+    payload = event["payload"]
+    work_item_id = payload["work_item_id"]
+    changes = payload["changes"]
+    columns = {
+        "area": "area",
+        "subject": "subject",
+        "title": "title",
+        "body": "body",
+        "status": "status",
+        "expected_by": "expected_by",
+        "export_visibility": "export_visibility",
+    }
+    assignments: list[str] = []
+    params: list[Any] = []
+    for field, column in columns.items():
+        if field not in changes:
+            continue
+        value = changes[field]
+        if field == "area":
+            validate_wip_area(value)
+        elif field == "status":
+            validate_wip_status(value)
+        elif field == "expected_by" and value:
+            value = parse_expected_by(value)
+        assignments.append(f"{column} = ?")
+        params.append(value)
+    if not assignments:
+        raise ValueError("work item update contains no fields")
+    if changes.get("status") == "closed":
+        assignments.extend(["closed_at = ?", "closed_by = ?"])
+        params.extend([event["created_at"], payload.get("updated_by") or event.get("created_by")])
+    elif changes.get("status") == "open":
+        assignments.extend(["closed_at = NULL", "closed_by = NULL"])
+    assignments.append("updated_at = ?")
+    params.extend([event["created_at"], work_item_id])
+    conn.execute(
+        f"UPDATE work_items SET {', '.join(assignments)} WHERE id = ?",
+        params,
+    )
+    insert_work_item_projection_event(conn, event, "updated")
+
+
+def apply_work_item_record_linked(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
+    payload = event["payload"]
+    validate_artifact_association_relation(payload["relation"])
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO work_item_record_links (
+          id, work_item_id, record_id, relation, note, created_at, created_by
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload["link_id"],
+            payload["work_item_id"],
+            payload["record_id"],
+            payload["relation"],
+            payload.get("note"),
+            event["created_at"],
+            event.get("created_by"),
+        ),
+    )
+    insert_work_item_projection_event(conn, event, "linked")
+
+
+def insert_work_item_projection_event(
+    conn: sqlite3.Connection,
+    event: dict[str, Any],
+    event_type: str,
+) -> None:
+    work_item_id = event["payload"]["work_item_id"]
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO work_item_events (
+          id, work_item_id, event_type, event_at, event_by, note, payload_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event["event_id"],
+            work_item_id,
+            event_type,
+            event["created_at"],
+            event.get("created_by"),
+            event.get("note"),
+            json.dumps(event.get("payload"), sort_keys=True),
+        ),
+    )
 
 
 def insert_projection_event(conn: sqlite3.Connection, event: dict[str, Any], projection_type: str) -> None:

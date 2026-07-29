@@ -47,6 +47,11 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     tools = request(server, "tools/list")["result"]["tools"]
     tool_names = {tool["name"] for tool in tools}
     assert "decision_rebuild_projection" in tool_names
+    assert "decision_add_work_item" in tool_names
+    assert "decision_update_work_item" in tool_names
+    assert "decision_list_work_items" in tool_names
+    assert "decision_show_work_item" in tool_names
+    assert "decision_link_work_item_record" in tool_names
     assert "decision_add_record" in tool_names
     assert "decision_validate_record" in tool_names
     assert "decision_add_html_artifact" in tool_names
@@ -70,6 +75,63 @@ def test_initialize_lists_tools_and_prompts(tmp_path: Path) -> None:
     assert "snag" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
     assert "requirement" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
     assert "test_case" in add_record_tool["inputSchema"]["properties"]["kind"]["enum"]
+
+
+def test_mcp_wip_flow_supports_quick_capture_and_record_links(tmp_path: Path) -> None:
+    server = MCPServer(tmp_path / "ledger.sqlite")
+    record_id = tool_call(
+        server,
+        "decision_add_record",
+        {
+            "subject": "project.todo",
+            "kind": "plan",
+            "body": "Durable implementation plan.",
+        },
+    )["id"]
+    work_item_id = tool_call(
+        server,
+        "decision_add_work_item",
+        {
+            "title": "Implement the plan",
+            "area": "work",
+        },
+    )["id"]
+    captured = tool_call(server, "decision_show_work_item", {"work_item_id": work_item_id})
+    assert captured["subject"] == "wip.work"
+    assert captured["expected_by"] is None
+
+    updated = tool_call(
+        server,
+        "decision_update_work_item",
+        {
+            "work_item_id": work_item_id,
+            "expected_by": "2026-08-01",
+            "status": "closed",
+            "updated_by": "pytest",
+        },
+    )
+    assert updated["status"] == "closed"
+    assert updated["expected_by"] == "2026-08-01"
+
+    link = tool_call(
+        server,
+        "decision_link_work_item_record",
+        {
+            "work_item_id": work_item_id,
+            "record_id": record_id,
+            "relation": "implements",
+            "note": "WIP execution of the durable plan.",
+        },
+    )
+    assert link["id"].startswith("lnk_")
+    shown = tool_call(server, "decision_show_work_item", {"work_item_id": work_item_id})
+    assert shown["record_links"][0]["record_id"] == record_id
+    listed = tool_call(
+        server,
+        "decision_list_work_items",
+        {"status": "closed"},
+    )
+    assert [item["id"] for item in listed["result"]] == [work_item_id]
 
     prompts = request(server, "prompts/list")["result"]["prompts"]
     assert {prompt["name"] for prompt in prompts} == {

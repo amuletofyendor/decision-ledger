@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
 from .db import connect
 from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
-from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, json_dumps
+from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, WIP_AREAS, WIP_STATUSES, json_dumps
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -70,6 +69,70 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.add_argument("--limit", type=int, default=50)
     list_cmd.add_argument("--json", action="store_true")
     list_cmd.set_defaults(func=cmd_list)
+
+    wip = subparsers.add_parser("wip", help="Manage temporal personal and work TODOs")
+    wip_sub = wip.add_subparsers(dest="wip_command", required=True)
+    wip_add = wip_sub.add_parser("add", help="Quick-capture a WIP item")
+    wip_add.add_argument("title")
+    wip_add.add_argument("--area", required=True, choices=WIP_AREAS)
+    wip_add.add_argument("--subject", help="Ledger subject; defaults to wip.<area>")
+    wip_add.add_argument("--body")
+    wip_add.add_argument("--body-file")
+    wip_add.add_argument("--expected-by", help="ISO 8601 date or timezone-aware datetime")
+    wip_add.add_argument("--created-by")
+    wip_add.add_argument("--visibility", default="private", choices=["private", "internal", "shareable", "public"])
+    wip_add.add_argument("--json", action="store_true")
+    wip_add.set_defaults(func=cmd_wip_add)
+
+    wip_list = wip_sub.add_parser("list", help="List WIP items; open items are shown by default")
+    wip_list.add_argument("--area", choices=WIP_AREAS)
+    wip_list.add_argument("--subject")
+    wip_list.add_argument("--status", choices=WIP_STATUSES)
+    wip_list.add_argument("--all", action="store_true", help="Include closed items")
+    wip_list.add_argument("--expected-from")
+    wip_list.add_argument("--expected-to")
+    wip_list.add_argument("--unscheduled", action="store_true")
+    wip_list.add_argument("--limit", type=int, default=200)
+    wip_list.add_argument("--json", action="store_true")
+    wip_list.set_defaults(func=cmd_wip_list)
+
+    wip_show = wip_sub.add_parser("show", help="Show a WIP item with record links and audit events")
+    wip_show.add_argument("work_item_id")
+    wip_show.add_argument("--json", action="store_true")
+    wip_show.set_defaults(func=cmd_wip_show)
+
+    wip_update = wip_sub.add_parser("update", help="Update or schedule a WIP item")
+    wip_update.add_argument("work_item_id")
+    wip_update.add_argument("--area", choices=WIP_AREAS)
+    wip_update.add_argument("--subject")
+    wip_update.add_argument("--title")
+    wip_update.add_argument("--body")
+    wip_update.add_argument("--body-file")
+    wip_update.add_argument("--status", choices=WIP_STATUSES)
+    wip_update.add_argument("--expected-by")
+    wip_update.add_argument("--clear-expected-by", action="store_true")
+    wip_update.add_argument("--visibility", choices=["private", "internal", "shareable", "public"])
+    wip_update.add_argument("--note")
+    wip_update.add_argument("--updated-by")
+    wip_update.add_argument("--json", action="store_true")
+    wip_update.set_defaults(func=cmd_wip_update)
+
+    for command, status in (("close", "closed"), ("reopen", "open")):
+        state_parser = wip_sub.add_parser(command, help=f"Mark a WIP item {status}")
+        state_parser.add_argument("work_item_id")
+        state_parser.add_argument("--note")
+        state_parser.add_argument("--updated-by")
+        state_parser.add_argument("--json", action="store_true")
+        state_parser.set_defaults(func=cmd_wip_set_status, target_status=status)
+
+    wip_link = wip_sub.add_parser("link", help="Link a WIP item to a durable ledger record")
+    wip_link.add_argument("work_item_id")
+    wip_link.add_argument("record_id")
+    wip_link.add_argument("--relation", default="associated_with", choices=[item for item in ASSOCIATION_RELATIONS if item != "supersedes"])
+    wip_link.add_argument("--note")
+    wip_link.add_argument("--created-by")
+    wip_link.add_argument("--json", action="store_true")
+    wip_link.set_defaults(func=cmd_wip_link)
 
     topics = subparsers.add_parser("topics", help="List subject topics in the decision tree")
     topics.add_argument("subject", nargs="?", help="Optional subject prefix to list under")
@@ -280,6 +343,93 @@ def cmd_list(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPath
         )
     ]
     output(rows, args.json, fallback=format_rows(rows))
+    return 0
+
+
+def cmd_wip_add(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else args.body
+    work_item_id = ledger.add_work_item(
+        area=args.area,
+        subject=args.subject or f"wip.{args.area}",
+        title=args.title,
+        body=body,
+        expected_by=args.expected_by,
+        created_by=args.created_by,
+        export_visibility=args.visibility,
+    )
+    output({"id": work_item_id}, args.json, fallback=f"added {work_item_id}")
+    return 0
+
+
+def cmd_wip_list(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    rows = ledger.list_work_items(
+        area=args.area,
+        subject=args.subject,
+        status=args.status,
+        include_closed=args.all,
+        expected_from=args.expected_from,
+        expected_to=args.expected_to,
+        unscheduled=args.unscheduled,
+        limit=args.limit,
+    )
+    output(rows, args.json, fallback=format_work_items(rows))
+    return 0
+
+
+def cmd_wip_show(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    item = ledger.get_work_item(args.work_item_id)
+    if item is None:
+        raise ValueError(f"work item not found: {args.work_item_id}")
+    output(item, args.json, fallback=format_work_item(item))
+    return 0
+
+
+def cmd_wip_update(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    changes: dict[str, Any] = {}
+    for field in ("area", "subject", "title", "status"):
+        value = getattr(args, field)
+        if value is not None:
+            changes[field] = value
+    if args.body_file:
+        changes["body"] = Path(args.body_file).read_text(encoding="utf-8")
+    elif args.body is not None:
+        changes["body"] = args.body
+    if args.clear_expected_by:
+        changes["expected_by"] = None
+    elif args.expected_by is not None:
+        changes["expected_by"] = args.expected_by
+    if args.visibility is not None:
+        changes["export_visibility"] = args.visibility
+    item = ledger.update_work_item(
+        work_item_id=args.work_item_id,
+        changes=changes,
+        updated_by=args.updated_by,
+        note=args.note,
+    )
+    output(item, args.json, fallback=f"updated {args.work_item_id}")
+    return 0
+
+
+def cmd_wip_set_status(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    item = ledger.update_work_item(
+        work_item_id=args.work_item_id,
+        changes={"status": args.target_status},
+        updated_by=args.updated_by,
+        note=args.note,
+    )
+    output(item, args.json, fallback=f"marked {args.work_item_id} {args.target_status}")
+    return 0
+
+
+def cmd_wip_link(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:
+    link_id = ledger.link_work_item_record(
+        work_item_id=args.work_item_id,
+        record_id=args.record_id,
+        relation=args.relation,
+        note=args.note,
+        created_by=args.created_by,
+    )
+    output({"id": link_id}, args.json, fallback=f"linked {args.work_item_id} to {args.record_id}")
     return 0
 
 
@@ -553,6 +703,34 @@ def format_rows(rows: list[dict[str, Any]]) -> str:
     for row in rows:
         summary = f" - {row['summary']}" if row.get("summary") else ""
         lines.append(f"{row['id']} [{row['status']}/{row['kind']}/{row['validation_state']}] {row['subject']}{summary}")
+    return "\n".join(lines)
+
+
+def format_work_items(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "no WIP items"
+    return "\n".join(
+        f"{item['id']} [{item['status']}/{item['area']}] "
+        f"expected={item.get('expected_by') or 'unscheduled'} {item['title']}"
+        for item in rows
+    )
+
+
+def format_work_item(item: dict[str, Any]) -> str:
+    lines = [
+        f"{item['id']} [{item['status']}/{item['area']}]",
+        f"subject: {item['subject']}",
+        f"expected by: {item.get('expected_by') or 'unscheduled'}",
+        f"title: {item['title']}",
+    ]
+    if item.get("body"):
+        lines.extend(["", item["body"]])
+    if item.get("record_links"):
+        lines.append("")
+        lines.append("record links:")
+        for link in item["record_links"]:
+            label = link.get("record_summary") or link["record_id"]
+            lines.append(f"  - {link['relation']} -> {link['record_id']} ({label})")
     return "\n".join(lines)
 
 
