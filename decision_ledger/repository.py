@@ -667,6 +667,8 @@ class Ledger:
                 "Vector index unavailable; results are lexical only. "
                 f"Reason: {vector_result.get('error', 'unknown error')}"
             )
+        if vector_available and vector_result.get("warning"):
+            warnings.append(str(vector_result["warning"]))
         if query_mode == "literal" and lexical_error is None:
             warnings.append("The query was not valid FTS5 syntax, so it was searched as literal text.")
         if warnings:
