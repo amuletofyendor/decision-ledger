@@ -25,14 +25,46 @@ RECORD_EVENT_TYPES = (
 )
 
 
+BUSY_TIMEOUT_MS = 5000
+WAL_UNSAFE_PREFIXES = ("/mnt/",)
+
+
 def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
+    """Open the ledger projection with WAL journaling and a busy timeout.
+
+    Several long-lived processes share one ledger file (the Claude and Codex MCP servers and
+    the wiki server), so a writer waits for another writer instead of failing at once.
+
+    Args:
+        db_path: Projection path; the default ledger home when omitted.
+
+    Returns:
+        An open connection with the schema applied.
+    """
     path = Path(db_path).expanduser() if db_path else DEFAULT_DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    if wal_supported(path):
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA foreign_keys = ON")
     apply_schema(conn)
     return conn
+
+
+def wal_supported(path: Path) -> bool:
+    """Return False for Windows-mounted paths, where SQLite's WAL shared memory is unreliable.
+
+    Args:
+        path: Database path.
+
+    Returns:
+        Whether WAL journaling should be enabled for this path.
+    """
+    resolved = str(path.expanduser().resolve())
+    return not resolved.startswith(WAL_UNSAFE_PREFIXES)
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
