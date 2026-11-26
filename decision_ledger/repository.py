@@ -579,8 +579,18 @@ class Ledger:
             fail_soft=embedder is None,
         )
         combined = fuse_search_results(lexical_rows, vector_result.get("results") or [], limit=limit)
-        return {
+        vector_available = vector_result.get("available", True) is not False
+        result: dict[str, Any] = {
             "query": query,
+            "mode": "hybrid" if vector_available else "lexical_only",
+            "vector_available": vector_available,
+        }
+        if not vector_available:
+            result["warning"] = (
+                "Vector index unavailable; results are lexical only. "
+                f"Reason: {vector_result.get('error', 'unknown error')}"
+            )
+        result.update({
             "combined": combined,
             "lexical": {
                 "available": True,
@@ -588,7 +598,8 @@ class Ledger:
                 "returned_count": len(lexical_rows),
             },
             "vector": vector_result,
-        }
+        })
+        return result
 
     def rebuild_vectors(
         self,

@@ -149,7 +149,7 @@ TOOL_GUIDANCE = {
     "decision_create_view": "Create a transient filtered view from a record query. It may render HTML in the response, but it does not persist anything.",
     "decision_save_view": "Persist a reusable saved-view query definition. Saved views are separate from HTML artifacts and are rendered live from current ledger data in the wiki.",
     "decision_list_views": "List persisted saved-view definitions. Use before linking or opening reusable views from the wiki.",
-    "decision_search": "Combined lexical and vector search over decision records. Use this as the default fuzzy recall tool before adding duplicate thinking.",
+    "decision_search": "Combined lexical and vector search over decision records. Use this as the default fuzzy recall tool before adding duplicate thinking. If the vector index is unavailable the result has mode \"lexical_only\", vector_available false, and a warning naming the reason.",
     "decision_vector_search": "Semantic vector search over record subject, metadata, tags, related subjects, summary, and body. Use directly only when isolating vector behavior.",
     "decision_show_record": "Show a complete record with tags, evidence, associations, and audit events.",
     "decision_list_records": "List records by subject prefix/status for quick navigation.",

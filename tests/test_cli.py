@@ -639,3 +639,50 @@ def test_bulk_supersede_subject_before(tmp_path: Path, capsys) -> None:
     ) == 0
     superseded = json.loads(capsys.readouterr().out)["superseded"]
     assert superseded == [old_a, old_b]
+
+
+def test_hybrid_search_reports_lexical_only_fallback(tmp_path: Path, monkeypatch) -> None:
+    from decision_ledger import vector_search
+    from decision_ledger.vector_search import VectorUnavailable
+
+    def unavailable(_conn: sqlite3.Connection) -> None:
+        raise VectorUnavailable("sqlite-vec is not installed")
+
+    monkeypatch.setattr(vector_search, "load_sqlite_vec", unavailable)
+    db_path = tmp_path / "ledger.sqlite"
+    ledger = EventedLedger(connect(db_path), EventStore(tmp_path), db_path)
+    record_id = ledger.add_record(
+        subject="decision-ledger.search.lexical",
+        kind="decision",
+        status="accepted",
+        summary="Keep FTS",
+        body="Use exact full text search for precise lookup.",
+    )
+
+    result = ledger.hybrid_search("precise lookup", limit=5)
+
+    assert result["mode"] == "lexical_only"
+    assert result["vector_available"] is False
+    assert "lexical only" in result["warning"]
+    assert "sqlite-vec is not installed" in result["warning"]
+    assert result["vector"]["available"] is False
+    assert [row["id"] for row in result["combined"]] == [record_id]
+
+
+def test_hybrid_search_reports_hybrid_mode_when_vectors_work(tmp_path: Path) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+    ledger = EventedLedger(connect(db_path), EventStore(tmp_path), db_path)
+    ledger.add_record(
+        subject="decision-ledger.search.vector",
+        kind="decision",
+        status="accepted",
+        summary="Add semantic lookup",
+        body="Use generated vector embeddings for semantic recall.",
+    )
+
+    result = ledger.hybrid_search("semantic", limit=5, embedder=FakeEmbedder())
+
+    assert result["mode"] == "hybrid"
+    assert result["vector_available"] is True
+    assert "warning" not in result
+    assert result["vector"]["available"] is True

@@ -192,6 +192,7 @@ def vector_search_records(
         })
     return {
         "query": query,
+        "available": True,
         "results": results,
         "requested_limit": limit,
         "returned_count": len(results),
