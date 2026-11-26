@@ -148,7 +148,11 @@ def rebuild_record_vectors_if_available(conn: sqlite3.Connection) -> dict[str, A
     try:
         return rebuild_record_vectors(conn)
     except VectorUnavailable as exc:
-        return {"available": False, "error": str(exc)}
+        return {
+            "available": False,
+            "error": str(exc),
+            "warning": f"The vector index was not rebuilt and vector search is unavailable: {exc}",
+        }
 
 
 def vector_search_records(
@@ -248,7 +252,13 @@ def vector_search_records_if_available(
             validation_state=validation_state,
         )
     except VectorUnavailable as exc:
-        return {"query": query, "results": [], "available": False, "error": str(exc)}
+        return {
+            "query": query,
+            "results": [],
+            "available": False,
+            "error": str(exc),
+            "warning": f"Vector search unavailable; no semantic results were returned: {exc}",
+        }
 
 
 def stale_embedding_inputs(conn: sqlite3.Connection, *, embedder: Embedder) -> list[RecordEmbeddingInput]:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .db import connect
-from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
+from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, rebuild_warnings, resolve_ledger_paths
 from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, WIP_AREAS, WIP_STATUSES, json_dumps
 
 
@@ -310,16 +310,23 @@ def cmd_rebuild(args: argparse.Namespace, ledger: EventedLedger, paths: LedgerPa
         return 2
     ledger.rebuild(recreate=args.recreate)
     vector_result = None if args.skip_vectors else ledger.rebuild_vectors()
-    result = {
+    result: dict[str, Any] = {
         "home": str(paths.home),
         "events_dir": str(paths.events_dir),
         "db_path": str(paths.db_path),
         "skipped_events": ledger.last_rebuild_skipped,
         "vectors": vector_result,
     }
+    warnings = rebuild_warnings(ledger.last_rebuild_skipped, vector_result)
+    if warnings:
+        result["warnings"] = warnings
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
     fallback = f"rebuilt sqlite projection: {paths.db_path}"
     if ledger.last_rebuild_skipped:
-        fallback += f" ({len(ledger.last_rebuild_skipped)} events could not be applied; see --json)"
+        fallback += f"; {len(ledger.last_rebuild_skipped)} events could not be applied (see --json)"
+    if vector_result is not None and vector_result.get("available") is False:
+        fallback += "; the vector index was not rebuilt"
     output(result, args.json, fallback=fallback)
     return 0
 
@@ -486,7 +493,7 @@ def cmd_vector_search(args: argparse.Namespace, ledger: EventedLedger, _paths: L
         limit=args.limit,
     )
     output(result, args.json, fallback=format_vector_results(result))
-    return 0
+    return 1 if result.get("available") is False else 0
 
 
 def cmd_gather(args: argparse.Namespace, ledger: EventedLedger, _paths: LedgerPaths) -> int:

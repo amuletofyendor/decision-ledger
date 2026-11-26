@@ -837,6 +837,26 @@ def replay_events(conn: sqlite3.Connection, event_store: EventStore, *, clear: b
     return skipped
 
 
+def rebuild_warnings(skipped: list[dict[str, Any]], vector_result: dict[str, Any] | None) -> list[str]:
+    """Summarise what a rebuild could not do.
+
+    Args:
+        skipped: Events the replay skipped.
+        vector_result: The vector rebuild result, or None when it was skipped on purpose.
+
+    Returns:
+        Human-readable warnings; empty when the rebuild was complete.
+    """
+    warnings: list[str] = []
+    if skipped:
+        warnings.append(f"{len(skipped)} events could not be applied; see skipped_events.")
+    if vector_result is not None and vector_result.get("available") is False:
+        warnings.append(
+            f"The vector index was not rebuilt and vector search is unavailable: {vector_result.get('error', 'unknown error')}"
+        )
+    return warnings
+
+
 def clear_projection(conn: sqlite3.Connection) -> None:
     """Delete every projection row inside the caller's transaction.
 
