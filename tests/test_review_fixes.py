@@ -26,7 +26,9 @@ class FakeEmbedder:
     dimensions = 2
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        return [[0.0, 1.0] if "vector" in text.lower() else [1.0, 0.0] for text in texts]
+        return [
+            [0.0, 1.0] if "vector" in text.lower() else [1.0, 0.0] for text in texts
+        ]
 
 
 def make_ledger(tmp_path: Path) -> EventedLedger:
@@ -45,16 +47,22 @@ def test_ledger_environment_is_cleared_for_every_test(tmp_path: Path) -> None:
     assert paths.home == tmp_path.resolve()
 
 
-def test_an_event_store_outside_the_test_directory_fails_the_test(tmp_path: Path) -> None:
+def test_an_event_store_outside_the_test_directory_fails_the_test(
+    tmp_path: Path,
+) -> None:
     outside = Path("/tmp") / "decision-ledger-guard-probe-never-created"
-    with pytest.raises(pytest.fail.Exception, match="outside the test's temporary directory"):
+    with pytest.raises(
+        pytest.fail.Exception, match="outside the test's temporary directory"
+    ):
         EventStore(outside)
     assert not outside.exists()
 
 
 def test_a_projection_outside_the_test_directory_fails_the_test() -> None:
     outside = Path("/tmp") / "decision-ledger-guard-probe.sqlite"
-    with pytest.raises(pytest.fail.Exception, match="outside the test's temporary directory"):
+    with pytest.raises(
+        pytest.fail.Exception, match="outside the test's temporary directory"
+    ):
         connect(outside)
     assert not outside.exists()
 
@@ -98,16 +106,32 @@ def test_connect_continues_in_the_old_journal_mode_when_wal_cannot_be_taken(
 # F-5: an empty or partial vector index is reported, not silent
 
 
-def test_vector_search_reports_an_empty_index_while_records_exist(tmp_path: Path) -> None:
+def test_vector_search_reports_an_empty_index_while_records_exist(
+    tmp_path: Path,
+) -> None:
     ledger = make_ledger(tmp_path)
-    ledger.add_record(subject=SUBJECT, kind="thought", status="active", summary=None, body="vector body")
-    ledger.add_record(subject=SUBJECT, kind="thought", status="active", summary=None, body="other body")
+    ledger.add_record(
+        subject=SUBJECT,
+        kind="thought",
+        status="active",
+        summary=None,
+        body="vector body",
+    )
+    ledger.add_record(
+        subject=SUBJECT,
+        kind="thought",
+        status="active",
+        summary=None,
+        body="other body",
+    )
     repo = Ledger(ledger.conn)
     full = repo.vector_search("vector", embedder=FakeEmbedder(), fail_soft=False)
     assert full["available"] is True and "warning" not in full
     ledger.conn.execute(f"DELETE FROM {METADATA_TABLE}")
     ledger.conn.commit()
-    empty = vector_search.vector_search_records(ledger.conn, "vector", embedder=FakeEmbedder(), build_missing=False)
+    empty = vector_search.vector_search_records(
+        ledger.conn, "vector", embedder=FakeEmbedder(), build_missing=False
+    )
     assert empty["available"] is False
     assert empty["coverage"] == {"embedded": 0, "records": 2}
     assert "empty" in empty["warning"]
@@ -115,11 +139,25 @@ def test_vector_search_reports_an_empty_index_while_records_exist(tmp_path: Path
 
 def test_hybrid_search_carries_a_partial_index_warning(tmp_path: Path) -> None:
     ledger = make_ledger(tmp_path)
-    ledger.add_record(subject=SUBJECT, kind="thought", status="active", summary=None, body="vector body")
-    ledger.add_record(subject=SUBJECT, kind="thought", status="active", summary=None, body="other body")
+    ledger.add_record(
+        subject=SUBJECT,
+        kind="thought",
+        status="active",
+        summary=None,
+        body="vector body",
+    )
+    ledger.add_record(
+        subject=SUBJECT,
+        kind="thought",
+        status="active",
+        summary=None,
+        body="other body",
+    )
     repo = Ledger(ledger.conn)
     repo.vector_search("vector", embedder=FakeEmbedder(), fail_soft=False)
-    one = ledger.conn.execute(f"SELECT record_id FROM {METADATA_TABLE} LIMIT 1").fetchone()[0]
+    one = ledger.conn.execute(
+        f"SELECT record_id FROM {METADATA_TABLE} LIMIT 1"
+    ).fetchone()[0]
     ledger.conn.execute(f"DELETE FROM {METADATA_TABLE} WHERE record_id = ?", (one,))
     ledger.conn.commit()
     partial = vector_search.vector_search_records(
@@ -133,7 +171,9 @@ def test_hybrid_search_carries_a_partial_index_warning(tmp_path: Path) -> None:
 # F-6: a new event file's directory entry is made durable
 
 
-def test_creating_an_event_file_fsyncs_its_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_creating_an_event_file_fsyncs_its_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = EventStore(tmp_path)
     synced: list[str] = []
     real = os.fsync
@@ -144,7 +184,10 @@ def test_creating_an_event_file_fsyncs_its_directory(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(os, "fsync", record)
     event = store.build(
-        event_type="record_added", subject="decision-ledger.safety.fsync", record_id="rec_x", payload={"id": "x"}
+        event_type="record_added",
+        subject="decision-ledger.safety.fsync",
+        record_id="rec_x",
+        payload={"id": "x"},
     )
     store.write(event)
     path = store.event_path("decision-ledger.safety.fsync")

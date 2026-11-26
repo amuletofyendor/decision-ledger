@@ -11,6 +11,9 @@ decision_show_record for exact audit detail.
 Best practices:
 - Treat namespace JSONL event files as canonical. SQLite is a generated
   projection for fast query/search/wiki serving and can be rebuilt from events.
+- Do not retry a write that returned warnings. The event is already in the
+  canonical log, so a retry records it twice. If a warning says the projection
+  is stale, run decision_rebuild_projection instead.
 - Treat subject prefixes as deterministic scope and associations as graph scope.
 - Prefer active, proposed, accepted, and resolved records for current reasoning.
 - Do not treat superseded, rejected, withdrawn, or archived records as current
