@@ -41,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     rebuild = subparsers.add_parser("rebuild", help="Rebuild the SQLite projection from canonical namespace event files")
     rebuild.add_argument("--skip-vectors", action="store_true", help="Skip rebuilding the generated vector projection")
+    rebuild.add_argument("--recreate", action="store_true", help="Delete and recreate the database file (for an unreadable file only)")
+    rebuild.add_argument("--force", action="store_true", help="Confirm --recreate; stop every MCP client and the wiki server first")
     rebuild.add_argument("--json", action="store_true")
     rebuild.set_defaults(func=cmd_rebuild)
 
@@ -299,7 +301,14 @@ def cmd_init(args: argparse.Namespace, _ledger: EventedLedger, paths: LedgerPath
 
 
 def cmd_rebuild(args: argparse.Namespace, ledger: EventedLedger, paths: LedgerPaths) -> int:
-    ledger.rebuild()
+    if args.recreate and not args.force:
+        print(
+            "error: --recreate deletes the database file while other processes may have it open. "
+            "Stop every MCP client and the wiki server, then pass --force.",
+            file=sys.stderr,
+        )
+        return 2
+    ledger.rebuild(recreate=args.recreate)
     vector_result = None if args.skip_vectors else ledger.rebuild_vectors()
     result = {
         "home": str(paths.home),

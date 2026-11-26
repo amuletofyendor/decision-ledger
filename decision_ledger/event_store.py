@@ -29,6 +29,24 @@ from .repository import (
 
 DEFAULT_LEDGER_HOME = Path.home() / ".decision-ledger"
 STALE_MARKER = "projection-stale.jsonl"
+# Every table in schema/001_initial.sql, children before parents. A rebuild in place clears
+# these rows and replays the events; tests/test_rebuild_in_place.py checks the list is complete.
+PROJECTION_TABLES = (
+    "record_events",
+    "work_item_events",
+    "work_item_record_links",
+    "record_artifact_associations",
+    "record_associations",
+    "evidence",
+    "record_tags",
+    "record_subjects",
+    "record_aliases",
+    "artifacts",
+    "saved_views",
+    "work_items",
+    "records",
+)
+VECTOR_METADATA_TABLE = "record_embedding_metadata"
 COMMIT_ATTEMPTS = 3
 COMMIT_RETRY_DELAY_SECONDS = 0.5
 
@@ -716,10 +734,22 @@ class EventedLedger:
             )
         return superseded
 
-    def rebuild(self) -> None:
-        self.conn.close()
-        self.conn, self.last_rebuild_skipped = rebuild_projection(self.db_path, self.event_store)
-        self.projection = Ledger(self.conn)
+    def rebuild(self, *, recreate: bool = False) -> None:
+        """Rebuild the projection from the event files.
+
+        By default the rebuild runs in place, in one write transaction on the open file, so other
+        processes that have the database open see the result. ``recreate`` deletes and recreates
+        the file instead; use it only for an unreadable file with every other process stopped.
+
+        Args:
+            recreate: Delete and recreate the database file.
+        """
+        if recreate:
+            self.conn.close()
+            self.conn, self.last_rebuild_skipped = rebuild_projection(self.db_path, self.event_store)
+            self.projection = Ledger(self.conn)
+        else:
+            self.last_rebuild_skipped = replay_events(self.conn, self.event_store, clear=True)
         marker = self.event_store.home / STALE_MARKER
         if marker.exists():
             marker.unlink()
@@ -757,15 +787,17 @@ def rebuild_projection(db_path: str | Path, event_store: EventStore) -> tuple[sq
     return conn, skipped
 
 
-def replay_events(conn: sqlite3.Connection, event_store: EventStore) -> list[dict[str, Any]]:
+def replay_events(conn: sqlite3.Connection, event_store: EventStore, *, clear: bool = False) -> list[dict[str, Any]]:
     """Apply every event once, each inside a savepoint, and commit.
 
     An event that cannot be applied is rolled back on its own, reported, and skipped, so one bad
-    event cannot block every rebuild.
+    event cannot block every rebuild. With ``clear`` the projection rows are deleted first in the
+    same write transaction, so a failed replay leaves the previous projection untouched.
 
     Args:
-        conn: Projection connection with no open transaction.
+        conn: Projection connection.
         event_store: The canonical event store.
+        clear: Delete existing projection rows before replaying.
 
     Returns:
         The skipped events as ``{event_id, event_type, subject, error}``.
@@ -774,8 +806,10 @@ def replay_events(conn: sqlite3.Connection, event_store: EventStore) -> list[dic
     skipped: list[dict[str, Any]] = []
     if conn.in_transaction:
         conn.commit()
-    conn.execute("BEGIN")
+    conn.execute("BEGIN IMMEDIATE")
     try:
+        if clear:
+            clear_projection(conn)
         for event in event_store.iter_events():
             event_id = event["event_id"]
             if event_id in seen_event_ids:
@@ -793,6 +827,7 @@ def replay_events(conn: sqlite3.Connection, event_store: EventStore) -> list[dic
                     "error": f"{type(exc).__name__}: {exc}",
                 })
             conn.execute("RELEASE SAVEPOINT replay_event")
+        conn.execute("INSERT INTO records_fts(records_fts) VALUES('rebuild')")
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -800,6 +835,24 @@ def replay_events(conn: sqlite3.Connection, event_store: EventStore) -> list[dic
     for item in skipped:
         print(f"rebuild skipped event {item['event_id']}: {item['error']}", file=sys.stderr)
     return skipped
+
+
+def clear_projection(conn: sqlite3.Connection) -> None:
+    """Delete every projection row inside the caller's transaction.
+
+    Vector metadata is cleared too: vectors are keyed by record rowid, which changes when records
+    are replayed, so every record is re-embedded by the next vector rebuild.
+
+    Args:
+        conn: Projection connection inside a write transaction.
+    """
+    for table in PROJECTION_TABLES:
+        conn.execute(f"DELETE FROM {table}")
+    has_metadata = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (VECTOR_METADATA_TABLE,)
+    ).fetchone()
+    if has_metadata:
+        conn.execute(f"DELETE FROM {VECTOR_METADATA_TABLE}")
 
 
 def apply_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
