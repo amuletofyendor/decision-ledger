@@ -20,12 +20,18 @@ DEFAULT_TEXT_SCHEMA = "record_text_v1"
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_MAX_TEXT_CHARS = 8000
+MIN_SHRINK_CHARS = 256
+SHRINK_FACTOR = 0.75
 VECTOR_TABLE = "record_embeddings_vec"
 METADATA_TABLE = "record_embedding_metadata"
 
 
 class VectorUnavailable(RuntimeError):
     pass
+
+
+class ContextLengthExceeded(VectorUnavailable):
+    """The embedding model rejected an input longer than its context window."""
 
 
 class Embedder(Protocol):
@@ -63,6 +69,27 @@ class OllamaEmbedder:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        try:
+            return self._request(texts)
+        except ContextLengthExceeded:
+            # One or more texts exceed the model's context window. Retry each
+            # text alone so only the oversized ones are shortened.
+            if len(texts) == 1:
+                return [self._embed_shrinking(texts[0])]
+            return [self._embed_shrinking(text) for text in texts]
+
+    def _embed_shrinking(self, text: str) -> list[float]:
+        """Embed one text, keeping its leading part until it fits the model context."""
+        candidate = text
+        while True:
+            try:
+                return self._request([candidate])[0]
+            except ContextLengthExceeded:
+                if len(candidate) <= MIN_SHRINK_CHARS:
+                    raise
+                candidate = candidate[: max(MIN_SHRINK_CHARS, int(len(candidate) * SHRINK_FACTOR))]
+
+    def _request(self, texts: list[str]) -> list[list[float]]:
         payload = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/api/embed",
@@ -75,9 +102,10 @@ class OllamaEmbedder:
                 body = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise VectorUnavailable(
-                f"Ollama embeddings unavailable at {self.base_url}: HTTP {exc.code}: {detail}"
-            ) from exc
+            message = f"Ollama embeddings unavailable at {self.base_url}: HTTP {exc.code}: {detail}"
+            if "context length" in detail.lower():
+                raise ContextLengthExceeded(message) from exc
+            raise VectorUnavailable(message) from exc
         except (OSError, urllib.error.URLError, TimeoutError) as exc:
             raise VectorUnavailable(f"Ollama embeddings unavailable at {self.base_url}: {exc}") from exc
 

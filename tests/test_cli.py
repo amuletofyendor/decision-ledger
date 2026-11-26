@@ -686,3 +686,41 @@ def test_hybrid_search_reports_hybrid_mode_when_vectors_work(tmp_path: Path) -> 
     assert result["vector_available"] is True
     assert "warning" not in result
     assert result["vector"]["available"] is True
+
+
+def test_ollama_embedder_shrinks_texts_that_exceed_context(monkeypatch) -> None:
+    from decision_ledger.vector_search import ContextLengthExceeded, OllamaEmbedder
+
+    embedder = OllamaEmbedder(dimensions=2)
+    requests: list[list[str]] = []
+
+    def fake_request(texts: list[str]) -> list[list[float]]:
+        requests.append(texts)
+        if any(len(text) > 1000 for text in texts):
+            raise ContextLengthExceeded("the input length exceeds the context length")
+        return [[float(len(text)), 1.0] for text in texts]
+
+    monkeypatch.setattr(embedder, "_request", fake_request)
+
+    vectors = embedder.embed(["short", "x" * 4000])
+
+    assert vectors[0] == [5.0, 1.0]
+    assert 0 < vectors[1][0] <= 1000
+    assert requests[0] == ["short", "x" * 4000]
+    assert ["short"] in requests
+
+
+def test_ollama_embedder_gives_up_when_text_cannot_fit(monkeypatch) -> None:
+    import pytest
+
+    from decision_ledger.vector_search import ContextLengthExceeded, OllamaEmbedder, VectorUnavailable
+
+    embedder = OllamaEmbedder(dimensions=2)
+
+    def always_too_long(_texts: list[str]) -> list[list[float]]:
+        raise ContextLengthExceeded("the input length exceeds the context length")
+
+    monkeypatch.setattr(embedder, "_request", always_too_long)
+
+    with pytest.raises(VectorUnavailable):
+        embedder.embed(["y" * 4000])
