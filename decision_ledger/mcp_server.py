@@ -134,7 +134,14 @@ class MCPServer:
             raise ValueError("Tool arguments must be an object")
 
         _definition, handler = self.tools[name]
+        self.ledger.write_warnings.clear()
         result = handler(arguments)
+        if self.ledger.write_warnings:
+            if isinstance(result, dict):
+                result = {**result, "warnings": list(self.ledger.write_warnings)}
+            else:
+                result = {"result": result, "warnings": list(self.ledger.write_warnings)}
+            self.ledger.write_warnings.clear()
         return tool_result(result)
 
 
@@ -830,6 +837,7 @@ def rebuild_projection_tool(ledger: EventedLedger, *, skip_vectors: bool = False
         "rebuilt": True,
         "db_path": str(ledger.db_path),
         "events_dir": str(ledger.event_store.events_dir),
+        "skipped_events": ledger.last_rebuild_skipped,
         "vectors": vector_result,
     }
 

@@ -305,9 +305,13 @@ def cmd_rebuild(args: argparse.Namespace, ledger: EventedLedger, paths: LedgerPa
         "home": str(paths.home),
         "events_dir": str(paths.events_dir),
         "db_path": str(paths.db_path),
+        "skipped_events": ledger.last_rebuild_skipped,
         "vectors": vector_result,
     }
-    output(result, args.json, fallback=f"rebuilt sqlite projection: {paths.db_path}")
+    fallback = f"rebuilt sqlite projection: {paths.db_path}"
+    if ledger.last_rebuild_skipped:
+        fallback += f" ({len(ledger.last_rebuild_skipped)} events could not be applied; see --json)"
+    output(result, args.json, fallback=fallback)
     return 0
 
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sqlite3
+import sys
+import time
 import hashlib
 import mimetypes
 from dataclasses import dataclass
@@ -25,6 +28,9 @@ from .repository import (
 
 
 DEFAULT_LEDGER_HOME = Path.home() / ".decision-ledger"
+STALE_MARKER = "projection-stale.jsonl"
+COMMIT_ATTEMPTS = 3
+COMMIT_RETRY_DELAY_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -79,7 +85,20 @@ class EventStore:
         self.events_dir = self.home / "events"
         self.events_dir.mkdir(parents=True, exist_ok=True)
 
-    def append(
+    def append(self, **fields: Any) -> dict[str, Any]:
+        """Build an event and write it to its subject's JSONL file.
+
+        Args:
+            **fields: The keyword arguments accepted by ``build``.
+
+        Returns:
+            The written event.
+        """
+        event = self.build(**fields)
+        self.write(event)
+        return event
+
+    def build(
         self,
         *,
         subject: str,
@@ -110,11 +129,33 @@ class EventStore:
             event["entity_id"] = resolved_entity_id
         if record_id is not None:
             event["record_id"] = record_id
-        path = self.event_path(subject)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+        self.event_path(subject)
         return event
+
+    def write(self, event: dict[str, Any]) -> None:
+        """Append one event line atomically and durably.
+
+        The line goes out in a single ``os.write`` on an ``O_APPEND`` descriptor under an
+        exclusive ``flock``, then ``fsync``, so concurrent writers cannot interleave lines.
+
+        Args:
+            event: An event from ``build``.
+
+        Raises:
+            OSError: When the file cannot be written.
+        """
+        path = self.event_path(event["subject"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = (json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            written = 0
+            while written < len(data):
+                written += os.write(fd, data[written:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     def event_path(self, subject: str) -> Path:
         parts = subject.split(".")
@@ -156,6 +197,58 @@ class EventedLedger:
         self.event_store = event_store
         self.db_path = Path(db_path).expanduser().resolve()
         self.projection = Ledger(conn)
+        self.write_warnings: list[str] = []
+        self.last_rebuild_skipped: list[dict[str, Any]] = []
+
+    def _commit(self) -> None:
+        self.conn.commit()
+
+    def _commit_event(self, event: dict[str, Any]) -> None:
+        """Apply an event to the projection, write it to JSONL, then commit.
+
+        A failure before the JSONL write leaves nothing behind, so the caller may retry. Once the
+        event is written it is canonical: a commit that still fails after retries is reported in
+        ``write_warnings`` and in the stale marker, not raised, so the caller does not retry and
+        duplicate it.
+
+        Args:
+            event: An event from ``EventStore.build``.
+
+        Raises:
+            Exception: Any error from applying or writing the event, after rolling back.
+        """
+        try:
+            apply_event(self.conn, event)
+            self.event_store.write(event)
+        except BaseException:
+            self.conn.rollback()
+            raise
+        last_error: sqlite3.Error | None = None
+        for attempt in range(COMMIT_ATTEMPTS):
+            try:
+                self._commit()
+                return
+            except sqlite3.Error as exc:
+                last_error = exc
+                if attempt + 1 < COMMIT_ATTEMPTS:
+                    time.sleep(COMMIT_RETRY_DELAY_SECONDS)
+        try:
+            self.conn.rollback()
+        except sqlite3.Error:
+            pass
+        self._mark_stale(event, last_error)
+
+    def _mark_stale(self, event: dict[str, Any], error: sqlite3.Error | None) -> None:
+        marker = self.event_store.home / STALE_MARKER
+        entry = {"event_id": event["event_id"], "subject": event["subject"], "error": str(error)}
+        with marker.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, sort_keys=True) + "\n")
+        warning = (
+            f"Event {event['event_id']} was recorded in the event log but the SQLite projection "
+            f"could not be updated ({error}). Do not retry; run a rebuild to bring the projection up to date."
+        )
+        self.write_warnings.append(warning)
+        print(warning, file=sys.stderr)
 
     def add_record(
         self,
@@ -175,7 +268,7 @@ class EventedLedger:
         validate_validation_state(validation_state)
         record_id = new_id("rec")
         created_at = now_iso()
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=subject,
             event_type="created",
             record_id=record_id,
@@ -193,8 +286,7 @@ class EventedLedger:
                 "export_visibility": export_visibility,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         return record_id
 
     def validate_record(
@@ -209,7 +301,7 @@ class EventedLedger:
         validate_validation_state(validation_state)
         record = self.require_record_dict(record_id)
         timestamp = parse_datetime(validated_at) if validated_at else now_iso()
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=record["subject"],
             event_type="validation_changed",
             record_id=record_id,
@@ -222,8 +314,7 @@ class EventedLedger:
                 "validation_note": note,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
 
     def add_evidence(
         self,
@@ -240,7 +331,7 @@ class EventedLedger:
     ) -> str:
         record = self.require_record_dict(record_id)
         evidence_id = new_id("evd")
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=record["subject"],
             event_type="evidence_added",
             record_id=record_id,
@@ -257,8 +348,7 @@ class EventedLedger:
                 "export_visibility": export_visibility,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         return evidence_id
 
     def add_artifact(
@@ -307,7 +397,7 @@ class EventedLedger:
             content=content,
         )
         created_at = now_iso()
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=subject,
             event_type="artifact_added",
             record_id=record_id,
@@ -327,8 +417,7 @@ class EventedLedger:
                 "export_visibility": export_visibility,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         return {
             "id": artifact_id,
             "record_id": record_id,
@@ -354,7 +443,7 @@ class EventedLedger:
         self.projection.require_artifact(artifact_id)
         validate_artifact_association_relation(relation)
         association_id = new_id("asc")
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=record["subject"],
             event_type="artifact_associated",
             record_id=record_id,
@@ -370,8 +459,7 @@ class EventedLedger:
                 "source": source,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         return association_id
 
     def save_view(
@@ -385,7 +473,7 @@ class EventedLedger:
     ) -> dict[str, Any]:
         view_id = new_id("view")
         created_at = now_iso()
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=subject,
             event_type="view_saved",
             record_id=view_id,
@@ -399,8 +487,7 @@ class EventedLedger:
                 "export_visibility": export_visibility,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         return {
             "id": view_id,
             "subject": subject,
@@ -427,7 +514,7 @@ class EventedLedger:
         self.projection.require_record(to_record_id)
         validate_association_relation(relation)
         association_id = new_id("asc")
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=from_record["subject"],
             event_type="associated",
             record_id=from_record_id,
@@ -443,8 +530,7 @@ class EventedLedger:
                 "source": source,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         return association_id
 
     def add_work_item(
@@ -464,7 +550,7 @@ class EventedLedger:
             raise ValueError("work item title is required")
         work_item_id = new_id("wip")
         created_at = now_iso()
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=subject,
             event_type="work_item_created",
             entity_type="work_item",
@@ -482,8 +568,7 @@ class EventedLedger:
                 "export_visibility": export_visibility,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         return work_item_id
 
     def update_work_item(
@@ -519,7 +604,7 @@ class EventedLedger:
         if normalized.get("expected_by"):
             normalized["expected_by"] = parse_expected_by(normalized["expected_by"])
         event_subject = normalized.get("subject", work_item["subject"])
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=event_subject,
             event_type="work_item_updated",
             entity_type="work_item",
@@ -532,8 +617,7 @@ class EventedLedger:
                 "updated_by": updated_by,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         updated = self.projection.get_work_item(work_item_id)
         assert updated is not None
         return updated
@@ -553,7 +637,7 @@ class EventedLedger:
         self.projection.require_record(record_id)
         validate_artifact_association_relation(relation)
         link_id = new_id("lnk")
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=work_item["subject"],
             event_type="work_item_record_linked",
             entity_type="work_item",
@@ -568,8 +652,7 @@ class EventedLedger:
                 "note": note,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
         return link_id
 
     def supersede_record(
@@ -583,7 +666,7 @@ class EventedLedger:
     ) -> None:
         old_record = self.require_record_dict(old_record_id)
         self.projection.require_record(replacement_record_id)
-        event = self.event_store.append(
+        event = self.event_store.build(
             subject=old_record["subject"],
             event_type="superseded",
             record_id=old_record_id,
@@ -597,8 +680,7 @@ class EventedLedger:
                 "note": note,
             },
         )
-        apply_event(self.conn, event)
-        self.conn.commit()
+        self._commit_event(event)
 
     def supersede_subject_before(
         self,
@@ -636,8 +718,11 @@ class EventedLedger:
 
     def rebuild(self) -> None:
         self.conn.close()
-        self.conn = rebuild_projection(self.db_path, self.event_store)
+        self.conn, self.last_rebuild_skipped = rebuild_projection(self.db_path, self.event_store)
         self.projection = Ledger(self.conn)
+        marker = self.event_store.home / STALE_MARKER
+        if marker.exists():
+            marker.unlink()
 
     def rebuild_vectors(self, *, fail_soft: bool = True) -> dict[str, Any]:
         return self.projection.rebuild_vectors(fail_soft=fail_soft)
@@ -652,22 +737,69 @@ class EventedLedger:
         return getattr(self.projection, name)
 
 
-def rebuild_projection(db_path: str | Path, event_store: EventStore) -> sqlite3.Connection:
+def rebuild_projection(db_path: str | Path, event_store: EventStore) -> tuple[sqlite3.Connection, list[dict[str, Any]]]:
+    """Recreate the projection from the event files.
+
+    Args:
+        db_path: Projection path.
+        event_store: The canonical event store.
+
+    Returns:
+        The new connection and the events that could not be applied, with their errors.
+    """
     path = Path(db_path).expanduser().resolve()
     for suffix in ("", "-wal", "-shm"):
         candidate = Path(str(path) + suffix)
         if candidate.exists():
             candidate.unlink()
     conn = connect(path)
+    skipped = replay_events(conn, event_store)
+    return conn, skipped
+
+
+def replay_events(conn: sqlite3.Connection, event_store: EventStore) -> list[dict[str, Any]]:
+    """Apply every event once, each inside a savepoint, and commit.
+
+    An event that cannot be applied is rolled back on its own, reported, and skipped, so one bad
+    event cannot block every rebuild.
+
+    Args:
+        conn: Projection connection with no open transaction.
+        event_store: The canonical event store.
+
+    Returns:
+        The skipped events as ``{event_id, event_type, subject, error}``.
+    """
     seen_event_ids: set[str] = set()
-    with conn:
+    skipped: list[dict[str, Any]] = []
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN")
+    try:
         for event in event_store.iter_events():
             event_id = event["event_id"]
             if event_id in seen_event_ids:
                 continue
-            apply_event(conn, event)
             seen_event_ids.add(event_id)
-    return conn
+            conn.execute("SAVEPOINT replay_event")
+            try:
+                apply_event(conn, event)
+            except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+                conn.execute("ROLLBACK TO SAVEPOINT replay_event")
+                skipped.append({
+                    "event_id": event_id,
+                    "event_type": event.get("event_type"),
+                    "subject": event.get("subject"),
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+            conn.execute("RELEASE SAVEPOINT replay_event")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    for item in skipped:
+        print(f"rebuild skipped event {item['event_id']}: {item['error']}", file=sys.stderr)
+    return skipped
 
 
 def apply_event(conn: sqlite3.Connection, event: dict[str, Any]) -> None:

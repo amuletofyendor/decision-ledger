@@ -441,3 +441,50 @@ def test_mcp_list_topics_tool(tmp_path: Path) -> None:
         "product.auth.oauth",
     ]
     assert topics[0]["subtree_records"] == 2
+
+
+def test_mcp_write_reports_a_projection_lag_warning(tmp_path: Path, monkeypatch) -> None:
+    import sqlite3
+
+    from decision_ledger import event_store as event_store_module
+    from decision_ledger.event_store import EventedLedger
+
+    server = MCPServer(tmp_path / "ledger.sqlite")
+    monkeypatch.setattr(event_store_module, "COMMIT_RETRY_DELAY_SECONDS", 0)
+
+    def failing_commit(self: EventedLedger) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(EventedLedger, "_commit", failing_commit)
+
+    result = tool_call(
+        server,
+        "decision_add_record",
+        {"subject": "decision-ledger.safety.mcp", "kind": "thought", "status": "active", "body": "lagging"},
+    )
+
+    assert result["warnings"] and "Do not retry" in result["warnings"][0]
+
+    monkeypatch.undo()
+    server.ledger.conn.rollback()
+    again = tool_call(
+        server,
+        "decision_add_record",
+        {"subject": "decision-ledger.safety.mcp", "kind": "thought", "status": "active", "body": "fine"},
+        request_id=11,
+    )
+    assert "warnings" not in again
+
+
+def test_mcp_rebuild_reports_skipped_events(tmp_path: Path) -> None:
+    server = MCPServer(tmp_path / "ledger.sqlite")
+    tool_call(
+        server,
+        "decision_add_record",
+        {"subject": "decision-ledger.safety.rebuild", "kind": "thought", "status": "active", "body": "kept"},
+    )
+
+    result = tool_call(server, "decision_rebuild_projection", {"skip_vectors": True}, request_id=12)
+
+    assert result["rebuilt"] is True
+    assert result["skipped_events"] == []
