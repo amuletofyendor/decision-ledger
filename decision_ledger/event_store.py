@@ -165,6 +165,7 @@ class EventStore:
         path = self.event_path(event["subject"])
         path.parent.mkdir(parents=True, exist_ok=True)
         data = (json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        created = not path.exists()
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
@@ -174,6 +175,13 @@ class EventStore:
             os.fsync(fd)
         finally:
             os.close(fd)
+        if created:
+            # A new file's directory entry is durable only once its directory is synced.
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
 
     def event_path(self, subject: str) -> Path:
         parts = subject.split(".")
