@@ -500,6 +500,65 @@ class Ledger:
         include_obsolete: bool = False,
         validation_state: str | None = None,
     ) -> list[sqlite3.Row]:
+        return self.search_with_mode(
+            query,
+            limit=limit,
+            include_obsolete=include_obsolete,
+            validation_state=validation_state,
+        )[0]
+
+    def search_with_mode(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        include_obsolete: bool = False,
+        validation_state: str | None = None,
+    ) -> tuple[list[sqlite3.Row], str]:
+        """Run a full-text search, retrying as literal text if FTS5 rejects the query syntax.
+
+        Args:
+            query: FTS5 query text, or plain text such as ``sqlite-vec``.
+            limit: Maximum rows to return.
+            include_obsolete: Include superseded, rejected, withdrawn and archived records.
+            validation_state: Optional validation state filter.
+
+        Returns:
+            The matching rows and the query mode used: ``"fts5"`` or ``"literal"``.
+
+        Raises:
+            sqlite3.OperationalError: For errors other than FTS5 query syntax.
+        """
+        try:
+            rows = self._fts_search(
+                query,
+                limit=limit,
+                include_obsolete=include_obsolete,
+                validation_state=validation_state,
+            )
+            return rows, "fts5"
+        except sqlite3.OperationalError as exc:
+            if not is_fts5_query_error(exc):
+                raise
+        literal = fts5_literal(query)
+        if not literal:
+            return [], "literal"
+        rows = self._fts_search(
+            literal,
+            limit=limit,
+            include_obsolete=include_obsolete,
+            validation_state=validation_state,
+        )
+        return rows, "literal"
+
+    def _fts_search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        include_obsolete: bool,
+        validation_state: str | None,
+    ) -> list[sqlite3.Row]:
         status_clause = "" if include_obsolete else self._current_status_clause("r.status")
         params: list[Any] = [query]
         if not include_obsolete:
@@ -561,15 +620,19 @@ class Ledger:
         validation_state: str | None = None,
         embedder: Embedder | None = None,
     ) -> dict[str, Any]:
-        lexical_rows = [
-            dict(row)
-            for row in self.search(
+        lexical_error: str | None = None
+        query_mode = "fts5"
+        lexical_rows: list[dict[str, Any]] = []
+        try:
+            rows, query_mode = self.search_with_mode(
                 query,
                 limit=limit,
                 include_obsolete=include_obsolete,
                 validation_state=validation_state,
             )
-        ]
+            lexical_rows = [dict(row) for row in rows]
+        except sqlite3.OperationalError as exc:
+            lexical_error = str(exc)
         vector_result = self.vector_search(
             query,
             limit=limit,
@@ -578,25 +641,49 @@ class Ledger:
             embedder=embedder,
             fail_soft=embedder is None,
         )
-        combined = fuse_search_results(lexical_rows, vector_result.get("results") or [], limit=limit)
         vector_available = vector_result.get("available", True) is not False
+        if lexical_error is not None and not vector_available:
+            raise sqlite3.OperationalError(
+                f"lexical search failed ({lexical_error}) and the vector index is unavailable "
+                f"({vector_result.get('error', 'unknown error')})"
+            )
+        combined = fuse_search_results(lexical_rows, vector_result.get("results") or [], limit=limit)
+        if lexical_error is not None:
+            mode = "vector_only"
+        elif vector_available:
+            mode = "hybrid"
+        else:
+            mode = "lexical_only"
         result: dict[str, Any] = {
             "query": query,
-            "mode": "hybrid" if vector_available else "lexical_only",
+            "mode": mode,
             "vector_available": vector_available,
         }
+        warnings: list[str] = []
+        if lexical_error is not None:
+            warnings.append(f"Lexical search failed; results are from vectors only. Reason: {lexical_error}")
         if not vector_available:
-            result["warning"] = (
+            warnings.append(
                 "Vector index unavailable; results are lexical only. "
                 f"Reason: {vector_result.get('error', 'unknown error')}"
             )
+        if vector_available and vector_result.get("warning"):
+            warnings.append(str(vector_result["warning"]))
+        if query_mode == "literal" and lexical_error is None:
+            warnings.append("The query was not valid FTS5 syntax, so it was searched as literal text.")
+        if warnings:
+            result["warning"] = " ".join(warnings)
+        lexical: dict[str, Any] = {
+            "available": lexical_error is None,
+            "query_mode": query_mode,
+            "results": lexical_rows,
+            "returned_count": len(lexical_rows),
+        }
+        if lexical_error is not None:
+            lexical["error"] = lexical_error
         result.update({
             "combined": combined,
-            "lexical": {
-                "available": True,
-                "results": lexical_rows,
-                "returned_count": len(lexical_rows),
-            },
+            "lexical": lexical,
             "vector": vector_result,
         })
         return result
@@ -1228,6 +1315,35 @@ class Ledger:
             "current": int(row["current"] or 0),
             "obsolete": int(row["obsolete"] or 0),
         }
+
+
+FTS5_QUERY_ERROR_PREFIXES = ("fts5:", "no such column:", "unknown special query:", "unterminated string")
+
+
+def fts5_literal(query: str) -> str:
+    """Quote each whitespace-separated token so FTS5 matches it as literal text.
+
+    Args:
+        query: Raw user query.
+
+    Returns:
+        An FTS5 query of quoted tokens joined by implicit AND, or "" when the query is blank.
+    """
+    tokens = [token for token in query.split() if token]
+    return " ".join('"' + token.replace('"', '""') + '"' for token in tokens)
+
+
+def is_fts5_query_error(exc: sqlite3.OperationalError) -> bool:
+    """Return True when SQLite rejected the FTS5 query text rather than failing for another reason.
+
+    Args:
+        exc: The error raised by a MATCH query.
+
+    Returns:
+        Whether the message is one FTS5 gives for query syntax.
+    """
+    message = str(exc)
+    return message.startswith(FTS5_QUERY_ERROR_PREFIXES)
 
 
 def fuse_search_results(

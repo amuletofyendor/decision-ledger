@@ -148,7 +148,11 @@ def rebuild_record_vectors_if_available(conn: sqlite3.Connection) -> dict[str, A
     try:
         return rebuild_record_vectors(conn)
     except VectorUnavailable as exc:
-        return {"available": False, "error": str(exc)}
+        return {
+            "available": False,
+            "error": str(exc),
+            "warning": f"The vector index was not rebuilt and vector search is unavailable: {exc}",
+        }
 
 
 def vector_search_records(
@@ -188,6 +192,18 @@ def vector_search_records(
     filter_sql = f"AND {' AND '.join(filters)}" if filters else ""
     params.append(limit)
 
+    coverage = index_coverage(conn)
+    if coverage["records"] and not coverage["embedded"]:
+        message = "the vector index is empty; rebuild the projection without --skip-vectors"
+        return {
+            "query": query,
+            "results": [],
+            "available": False,
+            "error": message,
+            "warning": f"Vector search unavailable; no semantic results were returned: {message}",
+            "coverage": coverage,
+        }
+
     rows = conn.execute(
         f"""
         SELECT r.id, r.subject, r.kind, r.status, r.validation_state, r.summary,
@@ -218,7 +234,7 @@ def vector_search_records(
             "distance": round(distance, 6),
             "similarity": round(similarity, 6),
         })
-    return {
+    result: dict[str, Any] = {
         "query": query,
         "available": True,
         "results": results,
@@ -228,7 +244,32 @@ def vector_search_records(
         "model": embedder.model,
         "dimensions": embedder.dimensions,
         "text_schema": DEFAULT_TEXT_SCHEMA,
+        "coverage": coverage,
     }
+    if coverage["embedded"] < coverage["records"]:
+        result["warning"] = (
+            f"The vector index covers {coverage['embedded']} of {coverage['records']} records, so "
+            "semantic results may be missing; rebuild the projection without --skip-vectors."
+        )
+    return result
+
+
+def index_coverage(conn: sqlite3.Connection) -> dict[str, int]:
+    """Count records and the records that have an embedding.
+
+    Args:
+        conn: Ledger connection with the vector schema.
+
+    Returns:
+        ``{"embedded": n, "records": m}``.
+    """
+    records = int(conn.execute("SELECT COUNT(*) FROM records").fetchone()[0])
+    embedded = int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM {METADATA_TABLE} m JOIN records r ON r.id = m.record_id"
+        ).fetchone()[0]
+    )
+    return {"embedded": embedded, "records": records}
 
 
 def vector_search_records_if_available(
@@ -248,7 +289,13 @@ def vector_search_records_if_available(
             validation_state=validation_state,
         )
     except VectorUnavailable as exc:
-        return {"query": query, "results": [], "available": False, "error": str(exc)}
+        return {
+            "query": query,
+            "results": [],
+            "available": False,
+            "error": str(exc),
+            "warning": f"Vector search unavailable; no semantic results were returned: {exc}",
+        }
 
 
 def stale_embedding_inputs(conn: sqlite3.Connection, *, embedder: Embedder) -> list[RecordEmbeddingInput]:

@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from . import __version__
 from .db import connect
-from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, resolve_ledger_paths
+from .event_store import DEFAULT_LEDGER_HOME, EventStore, EventedLedger, LedgerPaths, rebuild_warnings, resolve_ledger_paths
 from .guidance import CAPTURE_PROMPT, SERVER_INSTRUCTIONS, TOOL_GUIDANCE
 from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS, RECORD_STATUSES, VALIDATION_STATES, WIP_AREAS, WIP_STATUSES, json_dumps
 
@@ -134,7 +134,14 @@ class MCPServer:
             raise ValueError("Tool arguments must be an object")
 
         _definition, handler = self.tools[name]
+        self.ledger.write_warnings.clear()
         result = handler(arguments)
+        if self.ledger.write_warnings:
+            if isinstance(result, dict):
+                result = {**result, "warnings": list(self.ledger.write_warnings)}
+            else:
+                result = {"result": result, "warnings": list(self.ledger.write_warnings)}
+            self.ledger.write_warnings.clear()
         return tool_result(result)
 
 
@@ -826,12 +833,17 @@ def tool_result(value: Any) -> JsonObject:
 def rebuild_projection_tool(ledger: EventedLedger, *, skip_vectors: bool = False) -> JsonObject:
     ledger.rebuild()
     vector_result = None if skip_vectors else ledger.rebuild_vectors()
-    return {
+    result: JsonObject = {
         "rebuilt": True,
         "db_path": str(ledger.db_path),
         "events_dir": str(ledger.event_store.events_dir),
+        "skipped_events": ledger.last_rebuild_skipped,
         "vectors": vector_result,
     }
+    warnings = rebuild_warnings(ledger.last_rebuild_skipped, vector_result)
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def supersede_record_tool(ledger: EventedLedger, args: JsonObject) -> JsonObject:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 from .model import ARTIFACT_TYPES, ASSOCIATION_RELATIONS, RECORD_KINDS
@@ -25,14 +26,74 @@ RECORD_EVENT_TYPES = (
 )
 
 
+BUSY_TIMEOUT_MS = 5000
+# How long the first switch to WAL waits for readers in the old journal mode.
+WAL_SWITCH_TIMEOUT_MS = 5000
+WAL_UNSAFE_PREFIXES = ("/mnt/",)
+
+
 def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
+    """Open the ledger projection with WAL journaling and a busy timeout.
+
+    Several long-lived processes share one ledger file (the Claude and Codex MCP servers and
+    the wiki server), so a writer waits for another writer instead of failing at once.
+
+    Args:
+        db_path: Projection path; the default ledger home when omitted.
+
+    Returns:
+        An open connection with the schema applied.
+    """
     path = Path(db_path).expanduser() if db_path else DEFAULT_DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    if wal_supported(path):
+        enable_wal(conn, path)
     conn.execute("PRAGMA foreign_keys = ON")
     apply_schema(conn)
     return conn
+
+
+def enable_wal(conn: sqlite3.Connection, path: Path) -> None:
+    """Switch to WAL, or keep the current journal mode when another process blocks the switch.
+
+    The first switch needs an exclusive lock. A server still running the old code may hold a
+    read transaction at that moment; the connection then continues in the old mode, and a later
+    connection makes the switch once the old processes are gone.
+
+    Args:
+        conn: An open connection.
+        path: Database path, for the message.
+    """
+    conn.execute(f"PRAGMA busy_timeout = {WAL_SWITCH_TIMEOUT_MS}")
+    try:
+        mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+    except sqlite3.OperationalError as exc:
+        print(
+            f"decision-ledger: could not switch {path} to WAL journaling ({exc}); continuing in the "
+            "current mode. Restart the other ledger processes to finish the switch.",
+            file=sys.stderr,
+        )
+        return
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    if str(mode).lower() == "wal":
+        conn.execute("PRAGMA synchronous = NORMAL")
+
+
+def wal_supported(path: Path) -> bool:
+    """Return False for Windows-mounted paths, where SQLite's WAL shared memory is unreliable.
+
+    Args:
+        path: Database path.
+
+    Returns:
+        Whether WAL journaling should be enabled for this path.
+    """
+    resolved = str(path.expanduser().resolve())
+    return not resolved.startswith(WAL_UNSAFE_PREFIXES)
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
